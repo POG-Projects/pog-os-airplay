@@ -43,6 +43,13 @@ menu "Board Configuration"
 
     endchoice
 
+    # The XIAO shares the generic ESP32-S3 board implementation. This hidden
+    # marker selects its distinct release artifact without relying on flash
+    # size, which can be stale in a PlatformIO CMake cache.
+    config BOARD_XIAO_ESP32S3
+        bool
+        default n
+
     config BOARD_TARGET_PATH
         string
         default "squeezeamp" if BOARD_SQUEEZEAMP

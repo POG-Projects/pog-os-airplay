@@ -31,6 +31,25 @@ jobs:
         with:
           submodules: "recursive"
 
+      - name: Check web UI completeness
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          page = Path("data/www/index.html").read_text(encoding="utf-8")
+          required = (
+              "</script></body></html>",
+              "data-tab='systeme'",
+              "function startOTA()",
+              "function installLatestOTA()",
+          )
+          missing = [marker for marker in required if marker not in page]
+          if missing:
+              raise SystemExit(f"data/www/index.html is incomplete; missing: {missing}")
+          if not page.rstrip().endswith("</script></body></html>"):
+              raise SystemExit("data/www/index.html is truncated after its closing document")
+          PY
+
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format
 

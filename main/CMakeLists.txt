@@ -92,6 +92,7 @@ set( DEPS
     esp_timer
     esp_http_server
     esp_http_client
+    esp_https_ota
     app_update
     json
     mbedtls

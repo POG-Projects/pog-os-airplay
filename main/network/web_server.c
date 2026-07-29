@@ -2,8 +2,10 @@
 
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_https_ota.h"
 #include "esp_system.h"
 #include "esp_random.h"
+#include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1653,6 +1655,86 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+/* Release manifest environment for this exact build. Keep this mapping aligned
+   with .github/workflows/ci-release.yml. An empty string means that the CI does
+   not publish a compatible OTA image for this configuration. */
+static const char *ota_release_env(void) {
+#if defined(CONFIG_BOARD_XIAO_ESP32S3) && CONFIG_BOARD_XIAO_ESP32S3
+  return "xiao-s3";
+#elif defined(CONFIG_BOARD_ESP32S3_GENERIC) && CONFIG_BOARD_ESP32S3_GENERIC
+  return "esp32s3";
+#elif defined(CONFIG_BOARD_SQUEEZEAMP) && CONFIG_BOARD_SQUEEZEAMP && \
+    defined(CONFIG_BT_A2DP_ENABLE) && CONFIG_BT_A2DP_ENABLE
+  return "squeezeamp";
+#elif defined(CONFIG_BOARD_ESPARAGUS_AUDIO_BRICK) &&                        \
+    CONFIG_BOARD_ESPARAGUS_AUDIO_BRICK && defined(CONFIG_BT_A2DP_ENABLE) && \
+    CONFIG_BT_A2DP_ENABLE
+  return "esparagus-audio-brick";
+#else
+  return "";
+#endif
+}
+
+static const char *ota_release_asset(void) {
+  const char *env = ota_release_env();
+  if (strcmp(env, "esp32s3") == 0)
+    return "firmware-esp32s3.bin";
+  if (strcmp(env, "xiao-s3") == 0)
+    return "firmware-xiao-s3.bin";
+  if (strcmp(env, "squeezeamp") == 0)
+    return "firmware-squeezeamp-bt.bin";
+  if (strcmp(env, "esparagus-audio-brick") == 0)
+    return "firmware-esparagus-audio-brick-bt.bin";
+  return "";
+}
+
+static esp_err_t ota_latest_handler(httpd_req_t *req) {
+  if (check_auth(req) != ESP_OK)
+    return ESP_FAIL;
+
+  const char *asset = ota_release_asset();
+  if (!asset[0]) {
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND,
+                        "No official OTA image for this configuration");
+    return ESP_FAIL;
+  }
+
+  char url[192];
+  int url_len = snprintf(url, sizeof(url),
+                         "https://github.com/POG-Projects/pog-os-airplay/"
+                         "releases/latest/download/%s",
+                         asset);
+  if (url_len < 0 || (size_t)url_len >= sizeof(url)) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+
+  ESP_LOGI(TAG, "Stopping AirPlay for HTTPS OTA: %s", asset);
+  rtsp_server_stop();
+
+  esp_http_client_config_t http_config = {
+      .url = url,
+      .crt_bundle_attach = esp_crt_bundle_attach,
+      .timeout_ms = 30000,
+      .keep_alive_enable = true,
+  };
+  esp_https_ota_config_t ota_config = {
+      .http_config = &http_config,
+  };
+  esp_err_t err = esp_https_ota(&ota_config);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "HTTPS OTA failed: %s", esp_err_to_name(err));
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                        esp_err_to_name(err));
+    return ESP_FAIL;
+  }
+
+  httpd_resp_sendstr(req, "Firmware update complete, rebooting now!\n");
+  vTaskDelay(pdMS_TO_TICKS(500));
+  esp_restart();
+  return ESP_OK;
+}
+
 static esp_err_t system_info_handler(httpd_req_t *req) {
   cJSON *json = cJSON_CreateObject();
   cJSON *info = cJSON_CreateObject();
@@ -1712,6 +1794,12 @@ static esp_err_t system_info_handler(httpd_req_t *req) {
   }
   const esp_app_desc_t *app_desc = esp_app_get_description();
   cJSON_AddStringToObject(info, "firmware_version", app_desc->version);
+  cJSON_AddStringToObject(info, "ota_env", ota_release_env());
+  cJSON_AddStringToObject(info, "ota_asset", ota_release_asset());
+  const esp_partition_t *ota_partition =
+      esp_ota_get_next_update_partition(NULL);
+  cJSON_AddNumberToObject(info, "ota_max_size",
+                          ota_partition ? ota_partition->size : 0);
   cJSON_AddStringToObject(info, "boot_id", web_server_boot_id());
 #ifdef CONFIG_DAC_TAS58XX
   cJSON_AddBoolToObject(info, "eq_supported", true);
@@ -2362,6 +2450,11 @@ esp_err_t web_server_start(uint16_t port) {
                          .method = HTTP_POST,
                          .handler = ota_update_handler};
   httpd_register_uri_handler(s_server, &ota_uri);
+
+  httpd_uri_t ota_latest_uri = {.uri = "/api/ota/latest",
+                                .method = HTTP_POST,
+                                .handler = ota_latest_handler};
+  httpd_register_uri_handler(s_server, &ota_latest_uri);
 
   httpd_uri_t system_info_uri = {.uri = "/api/system/info",
                                  .method = HTTP_GET,

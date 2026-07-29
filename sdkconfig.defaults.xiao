@@ -1,4 +1,6 @@
 # XIAO ESP32-S3 — I2S pin mapping for the MAX98357A
+CONFIG_BOARD_XIAO_ESP32S3=y
+
 # Overrides the dev-board pins from sdkconfig.defaults.esp32s3.
 #   D0 = GPIO1 -> BCLK
 #   D1 = GPIO2 -> LRC (WS)
