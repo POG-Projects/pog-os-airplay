@@ -17,6 +17,7 @@
 #include "mdns_airplay.h"
 #include "pogdev_discovery.h"
 #include "pogdev_enrol.h"
+#include "pogdev_bus.h"
 #include "nvs_flash.h"
 #include "playback_control.h"
 #include "ptp_clock.h"
@@ -45,6 +46,28 @@ static const char *TAG = "main";
 
 static bool s_airplay_started = false;
 static bool s_airplay_infrastructure_ready = false;
+
+/* Traduction d'une commande pogdev vers le transport existant. C'est le seul
+ * endroit où pogdev touche à l'application, et c'est volontaire : lui donner
+ * accès au reste ferait de lui un morceau de ce firmware plutôt qu'un composant
+ * réutilisable par les autres cartes POG. */
+static void pogdev_on_command(const char *key, const char *name, const cJSON *params) {
+  (void)params;
+  if (strcmp(key, "transport") != 0) {
+    return;
+  }
+  if (strcmp(name, "play_pause") == 0) {
+    playback_control_play_pause();
+  } else if (strcmp(name, "next") == 0) {
+    playback_control_next();
+  } else if (strcmp(name, "prev") == 0) {
+    playback_control_prev();
+  } else if (strcmp(name, "volume_up") == 0) {
+    playback_control_volume_up();
+  } else if (strcmp(name, "volume_down") == 0) {
+    playback_control_volume_down();
+  }
+}
 
 static void start_airplay_services(void) {
   if (s_airplay_started) {
@@ -76,6 +99,11 @@ static void start_airplay_services(void) {
     settings_get_device_name(pog_name, sizeof(pog_name));
     if (pogdev_enrol_start(pog_name) != ESP_OK) {
       ESP_LOGW(TAG, "pogdev: l'enrôlement n'a pas pu démarrer");
+    }
+    /* Le bus ne démarre que si l'appareil est déjà adopté ; sinon il le fera
+     * au prochain redémarrage, une fois l'adoption faite. */
+    if (pogdev_bus_start(pogdev_on_command) == ESP_OK) {
+      ESP_LOGI(TAG, "pogdev: bus MQTT démarré");
     }
     s_airplay_infrastructure_ready = true;
   }
