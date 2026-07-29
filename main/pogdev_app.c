@@ -21,10 +21,21 @@ static const char *TAG = "pogdev_app";
 /*  Construction du descripteur                                        */
 /* ================================================================== */
 
-static cJSON *add_entity(cJSON *arr, const char *key, const char *name) {
+/* La catégorie est la section dans laquelle pog Home range l'entité sur la carte
+ * de l'appareil. Elle ne se devine pas : `led` et `tone` portent toutes deux
+ * `on_off`, `bass` et `led_brightness` toutes deux `number` — un regroupement
+ * dérivé des traits mettrait les graves et la luminosité de la LED côte à côte.
+ * Seul le firmware sait que `bass` appartient à l'égaliseur.
+ *
+ * Le vocabulaire est ouvert : une catégorie n'est jamais comparée qu'aux autres
+ * catégories du MÊME appareil, donc deux firmwares qui n'emploient pas les mêmes
+ * mots ne cassent rien. Ceux d'ici sont ceux du protocole (pogdev.md §4.3). */
+static cJSON *add_entity(cJSON *arr, const char *key, const char *name,
+                         const char *category) {
   cJSON *e = cJSON_CreateObject();
   cJSON_AddStringToObject(e, "key", key);
   cJSON_AddStringToObject(e, "name", name);
+  cJSON_AddStringToObject(e, "category", category);
   cJSON_AddItemToObject(e, "traits", cJSON_CreateArray());
   cJSON_AddItemToArray(arr, e);
   return e;
@@ -40,9 +51,10 @@ static cJSON *add_trait(cJSON *entity, const char *id) {
   return cfg;
 }
 
-static void add_number(cJSON *arr, const char *key, const char *name, double min,
-                       double max, double step, const char *unit) {
-  cJSON *cfg = add_trait(add_entity(arr, key, name), "number");
+static void add_number(cJSON *arr, const char *key, const char *name,
+                       const char *category, double min, double max, double step,
+                       const char *unit) {
+  cJSON *cfg = add_trait(add_entity(arr, key, name, category), "number");
   cJSON_AddNumberToObject(cfg, "min", min);
   cJSON_AddNumberToObject(cfg, "max", max);
   cJSON_AddNumberToObject(cfg, "step", step);
@@ -59,8 +71,8 @@ typedef struct {
 } option_t;
 
 static void add_select(cJSON *arr, const char *key, const char *name,
-                       const option_t *opts, int n) {
-  cJSON *cfg = add_trait(add_entity(arr, key, name), "select");
+                       const char *category, const option_t *opts, int n) {
+  cJSON *cfg = add_trait(add_entity(arr, key, name, category), "select");
   cJSON_AddStringToObject(cfg, "label", name);
   cJSON *list = cJSON_AddArrayToObject(cfg, "options");
   for (int i = 0; i < n; i++) {
@@ -95,7 +107,7 @@ static const option_t ARGB_EFFECTS[] = {
 
 static void describe(cJSON *entities) {
   /* ---- ce qui joue ---- */
-  cJSON *np = add_entity(entities, "now_playing", "Lecture en cours");
+  cJSON *np = add_entity(entities, "now_playing", "Lecture en cours", "media");
   cJSON *np_bin = add_trait(np, "binary");
   cJSON_AddStringToObject(np_bin, "kind", "playing");
   cJSON *np_txt = add_trait(np, "text");
@@ -104,12 +116,12 @@ static void describe(cJSON *entities) {
   cJSON_AddBoolToObject(np_txt, "read_only", true);
   cJSON_AddStringToObject(np_txt, "label", "Titre");
 
-  cJSON *ar = add_trait(add_entity(entities, "artist", "Artiste"), "text");
+  cJSON *ar = add_trait(add_entity(entities, "artist", "Artiste", "media"), "text");
   cJSON_AddBoolToObject(ar, "read_only", true);
   cJSON_AddStringToObject(ar, "label", "Artiste");
 
   /* ---- transport ---- */
-  cJSON *tr = add_trait(add_entity(entities, "transport", "Lecture"), "action");
+  cJSON *tr = add_trait(add_entity(entities, "transport", "Lecture", "media"), "action");
   cJSON *cmds = cJSON_AddArrayToObject(tr, "commands");
   add_command(cmds, "play_pause", "Lecture / pause");
   add_command(cmds, "next", "Suivant");
@@ -118,24 +130,26 @@ static void describe(cJSON *entities) {
   add_command(cmds, "volume_down", "Volume −");
 
   /* ---- son ---- */
-  add_number(entities, "volume", "Volume", 0, 100, 5, "%");
-  add_select(entities, "channel", "Sortie audio", CHANNELS, 4);
-  add_trait(add_entity(entities, "tone", "Correction de tonalité"), "on_off");
-  add_number(entities, "bass", "Graves", -12, 12, 1, "dB");
-  add_number(entities, "mid", "Médiums", -12, 12, 1, "dB");
-  add_number(entities, "treble", "Aigus", -12, 12, 1, "dB");
+  /* Le volume est en « media » et non en « audio » : c'est le geste quotidien,
+   * il doit rester avec la lecture plutôt que derrière un onglet de réglages. */
+  add_number(entities, "volume", "Volume", "media", 0, 100, 5, "%");
+  add_select(entities, "channel", "Sortie audio", "audio", CHANNELS, 4);
+  add_trait(add_entity(entities, "tone", "Correction de tonalité", "audio"), "on_off");
+  add_number(entities, "bass", "Graves", "audio", -12, 12, 1, "dB");
+  add_number(entities, "mid", "Médiums", "audio", -12, 12, 1, "dB");
+  add_number(entities, "treble", "Aigus", "audio", -12, 12, 1, "dB");
 
   /* ---- lumière ---- */
-  add_trait(add_entity(entities, "led", "Bande LED"), "on_off");
-  add_select(entities, "led_effect", "Effet lumineux", ARGB_EFFECTS, 12);
-  add_number(entities, "led_brightness", "Luminosité LED", 0, 100, 5, "%");
+  add_trait(add_entity(entities, "led", "Bande LED", "light"), "on_off");
+  add_select(entities, "led_effect", "Effet lumineux", "light", ARGB_EFFECTS, 12);
+  add_number(entities, "led_brightness", "Luminosité LED", "light", 0, 100, 5, "%");
 
   /* ---- protection ---- */
-  add_number(entities, "amp_standby", "Veille de l'ampli", 0, 120, 5, "min");
+  add_number(entities, "amp_standby", "Veille de l'ampli", "power", 0, 120, 5, "min");
 
   /* Diagnostic, et rien de plus : c'est utile le jour où l'enceinte décroche,
    * pas un réglage qu'on vient consulter. */
-  cJSON *w = add_trait(add_entity(entities, "wifi", "Signal WiFi"), "measurement");
+  cJSON *w = add_trait(add_entity(entities, "wifi", "Signal WiFi", "diagnostic"), "measurement");
   cJSON_AddStringToObject(w, "kind", "rssi");
   cJSON_AddStringToObject(w, "unit", "dBm");
 }
