@@ -24,7 +24,8 @@ static pogdev_creds_t s_creds;
 static pogdev_cmd_handler s_handler;
 static pogdev_describe_fn s_describe;
 static pogdev_state_fn s_state;
-static char s_topic_hello[96], s_topic_state[96], s_topic_status[96], s_topic_cmd[96];
+static char s_topic_hello[96], s_topic_state[96], s_topic_status[96],
+    s_topic_cmd[96];
 
 /* ---- le descripteur ----
  *
@@ -78,9 +79,11 @@ static void on_command(const char *data, int len) {
   const cJSON *key = cJSON_GetObjectItem(root, "key");
   const cJSON *name = cJSON_GetObjectItem(root, "name");
   if (cJSON_IsString(key) && cJSON_IsString(name)) {
-    ESP_LOGI(TAG, "commande reçue : %s.%s", key->valuestring, name->valuestring);
+    ESP_LOGI(TAG, "commande reçue : %s.%s", key->valuestring,
+             name->valuestring);
     if (s_handler != NULL) {
-      s_handler(key->valuestring, name->valuestring, cJSON_GetObjectItem(root, "params"));
+      s_handler(key->valuestring, name->valuestring,
+                cJSON_GetObjectItem(root, "params"));
     }
     /* Confirmer par l'état, jamais par une réponse sur `cmd` : côté serveur,
      * « la commande a été émise » et « l'appareil a obéi » sont deux faits
@@ -90,18 +93,21 @@ static void on_command(const char *data, int len) {
   cJSON_Delete(root);
 }
 
-static void mqtt_event(void *args, esp_event_base_t base, int32_t id, void *data) {
+static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
+                       void *data) {
   (void)args;
   (void)base;
   esp_mqtt_event_handle_t ev = data;
 
   switch ((esp_mqtt_event_id_t)id) {
   case MQTT_EVENT_CONNECTED: {
-    ESP_LOGI(TAG, "connecté au broker %s:%u", s_creds.mqtt_host, s_creds.mqtt_port);
+    ESP_LOGI(TAG, "connecté au broker %s:%u", s_creds.mqtt_host,
+             s_creds.mqtt_port);
     esp_mqtt_client_publish(s_client, s_topic_status, "online", 0, 1, 1);
     char *hello = build_hello();
     if (hello != NULL) {
-      esp_mqtt_client_publish(s_client, s_topic_hello, hello, 0, 1, 1 /* retenu */);
+      esp_mqtt_client_publish(s_client, s_topic_hello, hello, 0, 1,
+                              1 /* retenu */);
       cJSON_free(hello);
     }
     esp_mqtt_client_subscribe(s_client, s_topic_cmd, 1);
@@ -116,8 +122,8 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id, void *data
      * serveur : le compte ne reviendra pas, et réessayer en boucle ne sert à
      * rien. On le dit clairement plutôt que de laisser la pile réessayer en
      * silence. */
-    if (ev->error_handle != NULL &&
-        ev->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
+    if (ev->error_handle != NULL && ev->error_handle->connect_return_code ==
+                                        MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
       ESP_LOGE(TAG, "identifiants MQTT refusés — l'appareil a probablement été "
                     "supprimé de pog Home ; efface la NVS pour te réannoncer");
     }
@@ -135,7 +141,9 @@ static void state_task(void *arg) {
   }
 }
 
-void pogdev_bus_notify(void) { publish_state(); }
+void pogdev_bus_notify(void) {
+  publish_state();
+}
 
 esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
                            pogdev_cmd_handler handler) {
@@ -146,13 +154,17 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
   s_state = state;
   s_handler = handler;
 
-  snprintf(s_topic_hello, sizeof(s_topic_hello), "pog/%s/hello", s_creds.device_id);
-  snprintf(s_topic_state, sizeof(s_topic_state), "pog/%s/state", s_creds.device_id);
-  snprintf(s_topic_status, sizeof(s_topic_status), "pog/%s/status", s_creds.device_id);
+  snprintf(s_topic_hello, sizeof(s_topic_hello), "pog/%s/hello",
+           s_creds.device_id);
+  snprintf(s_topic_state, sizeof(s_topic_state), "pog/%s/state",
+           s_creds.device_id);
+  snprintf(s_topic_status, sizeof(s_topic_status), "pog/%s/status",
+           s_creds.device_id);
   snprintf(s_topic_cmd, sizeof(s_topic_cmd), "pog/%s/cmd", s_creds.device_id);
 
   char uri[80];
-  snprintf(uri, sizeof(uri), "mqtt://%s:%u", s_creds.mqtt_host, s_creds.mqtt_port);
+  snprintf(uri, sizeof(uri), "mqtt://%s:%u", s_creds.mqtt_host,
+           s_creds.mqtt_port);
 
   esp_mqtt_client_config_t cfg = {
       .broker.address.uri = uri,
@@ -175,7 +187,8 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
   if (s_client == NULL) {
     return ESP_FAIL;
   }
-  esp_err_t err = esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event, NULL);
+  esp_err_t err = esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID,
+                                                 mqtt_event, NULL);
   if (err != ESP_OK) {
     return err;
   }

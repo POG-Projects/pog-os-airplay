@@ -23,10 +23,10 @@ extern "C" {
 
 /* Ce qu'on reçoit à l'adoption, une seule fois. */
 typedef struct {
-  char device_id[48];      /* identifiant attribué par pog Home */
+  char device_id[48]; /* identifiant attribué par pog Home */
   char mqtt_host[48];
   uint16_t mqtt_port;
-  char mqtt_password[80];  /* 256 bits en hexadécimal */
+  char mqtt_password[80]; /* 256 bits en hexadécimal */
 } pogdev_creds_t;
 
 /* Démarre l'enrôlement en tâche de fond : s'annonce tant qu'on n'est pas

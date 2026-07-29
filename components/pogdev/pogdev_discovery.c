@@ -11,25 +11,26 @@
 static const char *TAG = "pogdev";
 
 #define POGDEV_SERVICE "_poghome"
-#define POGDEV_PROTO "_tcp"
+#define POGDEV_PROTO   "_tcp"
 
 /* Une requête mDNS ponctuelle plutôt qu'une souscription : la découverte est un
  * événement rare, et une requête toutes les N secondes coûte moins qu'un
  * navigateur permanent — en RAM comme en trafic multicast. */
-#define QUERY_TIMEOUT_MS 3000
+#define QUERY_TIMEOUT_MS  3000
 #define QUERY_MAX_RESULTS 4
 
 /* Une fois le serveur trouvé on ralentit fortement : il ne bouge pas. On
  * continue quand même de vérifier, parce qu'il peut changer d'adresse (DHCP,
  * machine remplacée) et que le firmware doit suivre sans qu'on le reflashe. */
 #define RETRY_NOT_FOUND_MS 10000
-#define RETRY_FOUND_MS 300000
+#define RETRY_FOUND_MS     300000
 
 static pogdev_server_t s_server;
 static bool s_have_server;
 static SemaphoreHandle_t s_lock;
 
-static uint16_t txt_u16(const mdns_result_t *r, const char *key, uint16_t fallback) {
+static uint16_t txt_u16(const mdns_result_t *r, const char *key,
+                        uint16_t fallback) {
   for (size_t i = 0; i < r->txt_count; i++) {
     if (r->txt[i].key && strcmp(r->txt[i].key, key) == 0 && r->txt[i].value) {
       int v = atoi(r->txt[i].value);
@@ -106,7 +107,8 @@ static void discovery_task(void *arg) {
     if (err != ESP_OK) {
       ESP_LOGW(TAG, "requête mDNS en échec : %s", esp_err_to_name(err));
     } else if (results == NULL) {
-      ESP_LOGI(TAG, "aucun serveur pog Home sur " POGDEV_SERVICE "." POGDEV_PROTO);
+      ESP_LOGI(TAG,
+               "aucun serveur pog Home sur " POGDEV_SERVICE "." POGDEV_PROTO);
     } else {
       pogdev_server_t found_server;
       if (take_result(results, &found_server)) {
@@ -116,11 +118,15 @@ static void discovery_task(void *arg) {
         s_have_server = true;
         xSemaphoreGive(s_lock);
 
-        ESP_LOGI(TAG, "pog Home trouvé : %s (" IPSTR ") api=%u mqtt=%u tls=%d proto=%d",
-                 found_server.host, IP2STR(&found_server.addr), found_server.api_port,
-                 found_server.mqtt_port, (int)found_server.tls, found_server.proto);
+        ESP_LOGI(TAG,
+                 "pog Home trouvé : %s (" IPSTR
+                 ") api=%u mqtt=%u tls=%d proto=%d",
+                 found_server.host, IP2STR(&found_server.addr),
+                 found_server.api_port, found_server.mqtt_port,
+                 (int)found_server.tls, found_server.proto);
       } else {
-        ESP_LOGW(TAG, "enregistrement trouvé mais sans adresse IPv4 exploitable");
+        ESP_LOGW(TAG,
+                 "enregistrement trouvé mais sans adresse IPv4 exploitable");
       }
     }
     if (results != NULL) {
@@ -141,7 +147,8 @@ esp_err_t pogdev_discovery_start(void) {
   /* 4 ko suffisent : la tâche n'appelle que mDNS et journalise. Elle vit en
    * priorité basse — la découverte ne doit jamais disputer du temps à la
    * chaîne audio, qui est temps réel. */
-  BaseType_t ok = xTaskCreate(discovery_task, "pogdev_disc", 4096, NULL, 3, NULL);
+  BaseType_t ok =
+      xTaskCreate(discovery_task, "pogdev_disc", 4096, NULL, 3, NULL);
   return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 

@@ -19,18 +19,18 @@ extern "C" {
 
 /* Ce qu'un enregistrement _poghome._tcp nous apprend. */
 typedef struct {
-  char host[64];        /* nom résolu, p.ex. "MacBook-de-Timothy.local." */
-  esp_ip4_addr_t addr;  /* adresse IPv4 résolue */
-  uint16_t api_port;    /* port HTTP — c'est lui qu'on interroge */
-  uint16_t mqtt_port;   /* port du broker, lu dans le TXT */
-  bool tls;             /* TXT tls=1 → l'API est en HTTPS */
-  int proto;            /* version du protocole annoncée par le serveur */
+  char host[64];       /* nom résolu, p.ex. "MacBook-de-Timothy.local." */
+  esp_ip4_addr_t addr; /* adresse IPv4 résolue */
+  uint16_t api_port;   /* port HTTP — c'est lui qu'on interroge */
+  uint16_t mqtt_port;  /* port du broker, lu dans le TXT */
+  bool tls;            /* TXT tls=1 → l'API est en HTTPS */
+  int proto;           /* version du protocole annoncée par le serveur */
 } pogdev_server_t;
 
 /* Démarre la recherche en tâche de fond.
  *
- * mDNS doit déjà être initialisé (mdns_airplay_init() le fait sur cette carte) ;
- * un second mdns_init() est toléré et ignoré.
+ * mDNS doit déjà être initialisé (mdns_airplay_init() le fait sur cette carte)
+ * ; un second mdns_init() est toléré et ignoré.
  */
 esp_err_t pogdev_discovery_start(void);
 

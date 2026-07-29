@@ -22,24 +22,24 @@
 
 static const char *TAG = "pogdev";
 
-#define NVS_NS "pogdev"
-#define NVS_KEY_CLAIM "claim"
+#define NVS_NS            "pogdev"
+#define NVS_KEY_CLAIM     "claim"
 #define NVS_KEY_DEVICE_ID "dev_id"
-#define NVS_KEY_MQTT_PW "mqtt_pw"
+#define NVS_KEY_MQTT_PW   "mqtt_pw"
 #define NVS_KEY_MQTT_HOST "mqtt_host"
 #define NVS_KEY_MQTT_PORT "mqtt_port"
 
 /* Cadence de relève de pog-docs §3.3 : celui qui installe n'est pas forcément
  * celui qui clique, donc on reste attentif au début puis on s'espace, sans
  * jamais abandonner. */
-#define POLL_FAST_MS 5000
-#define POLL_FAST_UNTIL_MS 60000
-#define POLL_MEDIUM_MS 30000
+#define POLL_FAST_MS         5000
+#define POLL_FAST_UNTIL_MS   60000
+#define POLL_MEDIUM_MS       30000
 #define POLL_MEDIUM_UNTIL_MS 3600000
-#define POLL_SLOW_MS 300000
+#define POLL_SLOW_MS         300000
 
 #define HTTP_TIMEOUT_MS 8000
-#define RESP_MAX 1024
+#define RESP_MAX        1024
 
 static pogdev_creds_t s_creds;
 static bool s_have_creds;
@@ -63,7 +63,8 @@ static void build_hw_id(void) {
 
 /* ---- NVS ---- */
 
-static esp_err_t nvs_get_str_into(nvs_handle_t h, const char *key, char *out, size_t cap) {
+static esp_err_t nvs_get_str_into(nvs_handle_t h, const char *key, char *out,
+                                  size_t cap) {
   size_t len = cap;
   return nvs_get_str(h, key, out, &len);
 }
@@ -76,9 +77,12 @@ static bool load_state(void) {
   nvs_get_str_into(h, NVS_KEY_CLAIM, s_claim_secret, sizeof(s_claim_secret));
 
   pogdev_creds_t c = {0};
-  bool ok = nvs_get_str_into(h, NVS_KEY_DEVICE_ID, c.device_id, sizeof(c.device_id)) == ESP_OK &&
-            nvs_get_str_into(h, NVS_KEY_MQTT_PW, c.mqtt_password, sizeof(c.mqtt_password)) == ESP_OK &&
-            nvs_get_str_into(h, NVS_KEY_MQTT_HOST, c.mqtt_host, sizeof(c.mqtt_host)) == ESP_OK;
+  bool ok = nvs_get_str_into(h, NVS_KEY_DEVICE_ID, c.device_id,
+                             sizeof(c.device_id)) == ESP_OK &&
+            nvs_get_str_into(h, NVS_KEY_MQTT_PW, c.mqtt_password,
+                             sizeof(c.mqtt_password)) == ESP_OK &&
+            nvs_get_str_into(h, NVS_KEY_MQTT_HOST, c.mqtt_host,
+                             sizeof(c.mqtt_host)) == ESP_OK;
   if (ok) {
     uint16_t port = 1883;
     nvs_get_u16(h, NVS_KEY_MQTT_PORT, &port);
@@ -94,7 +98,8 @@ static bool load_state(void) {
 
 /* Le secret est écrit AVANT la première annonce : c'est lui qui prouvera plus
  * tard que c'est bien nous qui relevons les identifiants, et le serveur le fige
- * dès la première annonce reçue. Le perdre entre-temps veut dire recommencer. */
+ * dès la première annonce reçue. Le perdre entre-temps veut dire recommencer.
+ */
 static esp_err_t ensure_claim_secret(void) {
   if (s_claim_secret[0] != '\0') {
     return ESP_OK;
@@ -136,13 +141,15 @@ static esp_err_t store_creds(const pogdev_creds_t *c) {
 
 /* ---- HTTP ---- */
 
-/* Un aller-retour, corps lu dans un tampon fourni. Renvoie le code HTTP, ou -1. */
+/* Un aller-retour, corps lu dans un tampon fourni. Renvoie le code HTTP, ou -1.
+ */
 static int http_call(const char *url, const char *method, const char *body,
                      char *resp, size_t resp_cap) {
   esp_http_client_config_t cfg = {
       .url = url,
       .timeout_ms = HTTP_TIMEOUT_MS,
-      .method = strcmp(method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET,
+      .method =
+          strcmp(method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET,
   };
   esp_http_client_handle_t cli = esp_http_client_init(&cfg);
   if (cli == NULL) {
@@ -154,7 +161,8 @@ static int http_call(const char *url, const char *method, const char *body,
   }
 
   int status = -1;
-  if (esp_http_client_open(cli, body != NULL ? (int)strlen(body) : 0) == ESP_OK) {
+  if (esp_http_client_open(cli, body != NULL ? (int)strlen(body) : 0) ==
+      ESP_OK) {
     if (body != NULL) {
       esp_http_client_write(cli, body, (int)strlen(body));
     }
@@ -177,7 +185,8 @@ static void announce(const pogdev_server_t *srv) {
   cJSON_AddStringToObject(body, "model", "POG AirPlay (XIAO S3)");
   cJSON_AddStringToObject(body, "fw_version", POGDEV_FW_VERSION);
   cJSON_AddStringToObject(body, "proto_version", "1");
-  cJSON_AddStringToObject(body, "name", s_device_name[0] ? s_device_name : "Enceinte POG");
+  cJSON_AddStringToObject(body, "name",
+                          s_device_name[0] ? s_device_name : "Enceinte POG");
   cJSON_AddStringToObject(body, "claim_secret", s_claim_secret);
   char *json = cJSON_PrintUnformatted(body);
   cJSON_Delete(body);
@@ -202,7 +211,8 @@ static void announce(const pogdev_server_t *srv) {
 /* Renvoie true quand les identifiants ont été relevés et enregistrés. */
 static bool collect(const pogdev_server_t *srv) {
   char url[256];
-  snprintf(url, sizeof(url), "http://" IPSTR ":%u/api/v1/pogdev/announce/%s?secret=%s",
+  snprintf(url, sizeof(url),
+           "http://" IPSTR ":%u/api/v1/pogdev/announce/%s?secret=%s",
            IP2STR(&srv->addr), srv->api_port, s_hw_id, s_claim_secret);
 
   char resp[RESP_MAX];
@@ -211,7 +221,9 @@ static bool collect(const pogdev_server_t *srv) {
   if (status == 404 || status == 410) {
     /* Inconnu du serveur, ou identifiants déjà remis à quelqu'un. Dans les deux
      * cas notre secret ne vaut plus rien : on repart d'une annonce neuve. */
-    ESP_LOGW(TAG, "le serveur ne nous reconnaît plus (HTTP %d) — nouvelle annonce", status);
+    ESP_LOGW(TAG,
+             "le serveur ne nous reconnaît plus (HTTP %d) — nouvelle annonce",
+             status);
     s_claim_secret[0] = '\0';
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
@@ -263,7 +275,8 @@ static bool collect(const pogdev_server_t *srv) {
    * fois, donc les perdre ici impose une ré-adoption manuelle. */
   esp_err_t err = store_creds(&c);
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "impossible d'enregistrer les identifiants (%s) — on retentera",
+    ESP_LOGE(TAG,
+             "impossible d'enregistrer les identifiants (%s) — on retentera",
              esp_err_to_name(err));
     return false;
   }
@@ -293,7 +306,8 @@ static void enrol_task(void *arg) {
   for (;;) {
     pogdev_server_t srv;
     if (!pogdev_discovery_get(&srv)) {
-      vTaskDelay(pdMS_TO_TICKS(5000)); /* la découverte n'a encore rien trouvé */
+      vTaskDelay(
+          pdMS_TO_TICKS(5000)); /* la découverte n'a encore rien trouvé */
       continue;
     }
     if (ensure_claim_secret() != ESP_OK) {

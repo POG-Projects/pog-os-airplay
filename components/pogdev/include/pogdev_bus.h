@@ -24,7 +24,8 @@ typedef void (*pogdev_describe_fn)(cJSON *entities);
 typedef void (*pogdev_state_fn)(cJSON *state);
 
 /* Une commande reçue. `params` peut être NULL. */
-typedef void (*pogdev_cmd_handler)(const char *key, const char *name, const cJSON *params);
+typedef void (*pogdev_cmd_handler)(const char *key, const char *name,
+                                   const cJSON *params);
 
 /* Se connecte au broker avec les identifiants reçus à l'adoption, publie le
  * descripteur et l'état, puis écoute les commandes.

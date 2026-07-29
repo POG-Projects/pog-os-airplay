@@ -397,7 +397,8 @@ static void strip_show(void) {
      * doit s'arrêter et le dire une fois, pas inonder.
      *
      * La sortie reste réactivable sans redémarrer : toute réussite remet le
-     * compteur à zéro, et changer la configuration passe par argb_free_rmt(). */
+     * compteur à zéro, et changer la configuration passe par argb_free_rmt().
+     */
     if (rmt_tx_wait_all_done(s_chan, pdMS_TO_TICKS(50)) == ESP_OK) {
       s_tx_failures = 0;
     } else if (s_tx_failures < ARGB_TX_FAILURES_MAX) {
