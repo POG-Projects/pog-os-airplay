@@ -56,6 +56,12 @@ static int s_count = 0;
 static uint8_t s_cr = 0x20, s_cg = 0x80, s_cb = 0xFF; // base colour (R,G,B)
 static int s_speed = 5;                               // 1..10 animation speed
 
+/* Au bout de ce nombre de trames sans acquittement, on cesse de journaliser et
+ * on considère la sortie muette : le pilote RMT sort une erreur par trame, soit
+ * ~50 par seconde, ce qui rend la console inexploitable. */
+#define ARGB_TX_FAILURES_MAX 20
+static int s_tx_failures = 0;
+
 static rmt_channel_handle_t s_chan = NULL;
 static rmt_encoder_handle_t s_encoder = NULL;
 static uint8_t *s_fb = NULL;  // working RGB framebuffer (count*3: R,G,B)
@@ -322,6 +328,13 @@ static void fx_level_color(const argb_audio_t *a) {
 // ============================================================================
 
 static void strip_show(void) {
+  /* Sortie considérée muette : on ne retente plus du tout. Il ne suffit pas de
+   * cesser de journaliser nous-mêmes — c'est rmt_tx_wait_all_done() qui émet
+   * l'erreur, une par trame. Tant qu'on l'appelle, la console reste noyée. */
+  if (s_tx_failures >= ARGB_TX_FAILURES_MAX) {
+    return;
+  }
+
   int br = s_brightness;
   if (br < 0) br = 0;
   if (br > 255) br = 255;
@@ -336,7 +349,24 @@ static void strip_show(void) {
   rmt_transmit_config_t tx_cfg = {.loop_count = 0};
   if (rmt_transmit(s_chan, s_encoder, s_out, (size_t)s_count * 3, &tx_cfg) ==
       ESP_OK) {
-    rmt_tx_wait_all_done(s_chan, pdMS_TO_TICKS(50));
+    /* Le retour était ignoré. Quand le canal RMT n'aboutit pas — bande absente,
+     * broche en conflit — le pilote journalise une erreur à CHAQUE trame, donc
+     * ~50 par seconde : la console devient inutilisable et tout le reste du
+     * firmware y devient invisible. Un périphérique qui n'arrive pas à émettre
+     * doit s'arrêter et le dire une fois, pas inonder.
+     *
+     * La sortie reste réactivable sans redémarrer : toute réussite remet le
+     * compteur à zéro, et changer la configuration passe par argb_free_rmt(). */
+    if (rmt_tx_wait_all_done(s_chan, pdMS_TO_TICKS(50)) == ESP_OK) {
+      s_tx_failures = 0;
+    } else if (s_tx_failures < ARGB_TX_FAILURES_MAX) {
+      if (++s_tx_failures == ARGB_TX_FAILURES_MAX) {
+        ESP_LOGE(TAG,
+                 "la bande ARGB ne répond pas sur GPIO%d après %d trames — "
+                 "rendu suspendu (vérifie le câblage, ou désactive-la)",
+                 s_gpio, ARGB_TX_FAILURES_MAX);
+      }
+    }
   }
 }
 
@@ -399,6 +429,7 @@ static void render_task(void *arg) {
 // ============================================================================
 
 static void argb_free_rmt(void) {
+  s_tx_failures = 0;
   if (s_chan) {
     rmt_disable(s_chan);
   }
