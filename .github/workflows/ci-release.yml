@@ -9,6 +9,19 @@ on:
     branches: [main]
     paths-ignore:
       - "**.md"
+  # Pour recouper une release sans avoir à pousser un commit vide.
+  workflow_dispatch:
+
+# Pousser deux fois en une minute lançait deux matrices complètes en parallèle,
+# dont la première ne servait plus à rien. La branche par défaut est exclue de
+# l'annulation : une release à moitié publiée est pire qu'un run gaspillé.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Le minimum par défaut ; seul le job qui publie est élevé.
+permissions:
+  contents: read
 
 jobs:
   format-check:
@@ -63,9 +76,47 @@ jobs:
           fi
           echo "All files pass clang-tidy checks"
 
+  # Le dépôt se construit de DEUX façons : idf.py (ci-dessous) et PlatformIO,
+  # qui est ce qu'on utilise sur le bureau. Elles ne lisent pas la même chose —
+  # PlatformIO a son propre cache CMake et ne relit pas le CMakeLists.txt d'un
+  # composant quand une source y est ajoutée. Une dépendance circulaire entre
+  # composants, que CMake écarte en silence, passe donc inaperçue côté idf.py et
+  # casse le lien côté PlatformIO. Sans ce job, ce genre de panne ne se découvre
+  # que sur le bureau de quelqu'un, longtemps après.
+  platformio-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: "recursive"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # Repartir d'un cache CMake vide, précisément parce que c'est le cache qui
+      # masque le défaut qu'on cherche.
+      - name: Build xiao-s3 from scratch
+        run: |
+          rm -rf .pio/build
+          pio run -e xiao-s3
+
   build:
     runs-on: ubuntu-latest
-    needs: [format-check, lint-check]
+    needs: [format-check, lint-check, platformio-build]
     strategy:
       fail-fast: false
       matrix:
@@ -126,6 +177,15 @@ jobs:
           # container as root; take ownership so this host step can write into it.
           mkdir -p dist
           sudo chown -R "$(id -u):$(id -g)" dist
+          # L'empreinte est calculée ICI, là où le binaire vient d'être produit.
+          # Un flasher qui écrit 8 Mo sur une carte doit pouvoir vérifier qu'il
+          # écrit bien ce que la CI a construit : sans elle, il ne peut faire
+          # confiance qu'au transport, et un téléchargement tronqué se solde par
+          # une carte muette qu'il faut rattraper au câble.
+          MERGED_SHA=$(sha256sum "dist/merged-${{ matrix.name }}.bin" | cut -d" " -f1)
+          APP_SHA=$(sha256sum "dist/firmware-${{ matrix.name }}.bin" | cut -d" " -f1)
+          MERGED_SIZE=$(stat -c%s "dist/merged-${{ matrix.name }}.bin")
+
           cat > "dist/manifest-${{ matrix.name }}.json" <<EOF
           {
             "env": "${{ matrix.env }}",
@@ -133,7 +193,10 @@ jobs:
             "chip": "${{ matrix.target }}",
             "flashSize": "${{ matrix.flash_size }}",
             "app": "firmware-${{ matrix.name }}.bin",
-            "merged": "merged-${{ matrix.name }}.bin"
+            "appSha256": "${APP_SHA}",
+            "merged": "merged-${{ matrix.name }}.bin",
+            "mergedSha256": "${MERGED_SHA}",
+            "mergedSize": ${MERGED_SIZE}
           }
           EOF
 
@@ -144,7 +207,7 @@ jobs:
           path: dist/*
 
   release:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -202,6 +265,42 @@ jobs:
           echo "--- manifest.json ---"; cat dist/manifest.json
           echo "--- assets ---"; ls -l dist
 
+      # Le manifeste est ce que lira le flasher : s'il est mal formé ou qu'il
+      # cite une image absente, la panne se découvre au moment où quelqu'un
+      # essaie d'écrire sur une carte. La release est le dernier endroit où on
+      # peut encore refuser.
+      - name: Validate manifest
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          m = json.load(open("dist/manifest.json"))
+          boards = m.get("boards") or []
+          if not boards:
+              sys.exit("manifest.json declares no board")
+          seen = set()
+          for b in boards:
+              for key in ("env", "label", "chip", "flashSize", "app", "merged", "mergedSha256"):
+                  if not b.get(key):
+                      sys.exit(f"board {b.get('env', '?')}: missing {key}")
+              if b["env"] in seen:
+                  sys.exit(f"duplicate env {b['env']}")
+              seen.add(b["env"])
+              for key in ("app", "merged"):
+                  path = os.path.join("dist", b[key])
+                  if not os.path.isfile(path):
+                      sys.exit(f"board {b['env']}: {b[key]} is declared but absent")
+              size = os.path.getsize(os.path.join("dist", b["merged"]))
+              if b.get("mergedSize") not in (None, size):
+                  sys.exit(f"board {b['env']}: mergedSize {b['mergedSize']} != {size}")
+          print(f"manifest.json: {len(boards)} board(s), every asset present")
+          PY
+
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum *.bin manifest.json > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Update version.txt
         if: steps.version.outputs.bumped == 'true'
         run: |
@@ -220,5 +319,6 @@ jobs:
           files: |
             dist/*.bin
             dist/manifest.json
+            dist/SHA256SUMS
           make_latest: true
           generate_release_notes: true
