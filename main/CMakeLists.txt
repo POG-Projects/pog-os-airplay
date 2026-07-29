@@ -104,6 +104,7 @@ set( DEPS
     spiffs_storage
     mqtt
     esp_app_format
+    pogdev
 )
 
 # TODO: why these fall over in CI and fine locally...

@@ -15,6 +15,7 @@
 #include "ha_mqtt.h"
 #include "hap.h"
 #include "mdns_airplay.h"
+#include "pogdev_discovery.h"
 #include "nvs_flash.h"
 #include "playback_control.h"
 #include "ptp_clock.h"
@@ -64,6 +65,12 @@ static void start_airplay_services(void) {
     ESP_ERROR_CHECK(audio_receiver_init());
     ESP_ERROR_CHECK(audio_output_init());
     mdns_airplay_init();
+    /* POG : chercher le serveur pog Home sur le réseau. Lancé une seule fois,
+     * après mDNS puisqu'il en dépend. Un échec n'est pas fatal — un appareil
+     * sans serveur reste une enceinte. */
+    if (pogdev_discovery_start() != ESP_OK) {
+      ESP_LOGW(TAG, "pogdev: la recherche du serveur n'a pas pu démarrer");
+    }
     s_airplay_infrastructure_ready = true;
   }
 
