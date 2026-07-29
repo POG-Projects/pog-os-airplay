@@ -786,7 +786,10 @@ static void parse_sdp(rtsp_conn_t *conn, const char *sdp, size_t len) {
                          &frame_len, &compat, &bit_depth, &pb, &mb, &kb,
                          &num_ch, &max_run, &max_frame, &avg_rate, &rate);
     if (matched >= 7) {
-      format.max_samples_per_frame = frame_len;
+      // frame_len is untrusted (SDP). The decode buffer is sized to
+      // MAX_SAMPLES_PER_FRAME, so clamp — an over-large value would overrun it.
+      format.max_samples_per_frame =
+          frame_len > MAX_SAMPLES_PER_FRAME ? MAX_SAMPLES_PER_FRAME : frame_len;
       format.sample_size = bit_depth;
       format.rice_history_mult = pb;
       format.rice_initial_history = mb;
@@ -1079,7 +1082,8 @@ static void handle_setup(int socket, rtsp_conn_t *conn,
 
   // Handle initial SETUP vs stream SETUP
   if (!request_has_streams) {
-#if defined(CONFIG_AIRPLAY_FORCE_V1) || defined(CONFIG_AIRPLAY_ALLOW_LEGACY_RAOP)
+#if defined(CONFIG_AIRPLAY_FORCE_V1) || \
+    defined(CONFIG_AIRPLAY_ALLOW_LEGACY_RAOP)
     // Classic RAOP (AirPlay v1) SETUP has no bplist body — transport info is
     // in the RTSP "Transport:" header. The presence of that header cleanly
     // distinguishes a legacy RAOP sender from an AirPlay 2 initial SETUP
@@ -1327,7 +1331,11 @@ static void parse_dmap_metadata_depth(const uint8_t *data, size_t len,
                         ((uint32_t)data[pos + 2] << 8) | data[pos + 3];
     pos += 4;
 
-    if (pos + item_len > len) {
+    // Overflow-safe: the loop guarantees pos <= len, so len - pos never
+    // underflows. (The old `pos + item_len > len` wraps at 32 bits when
+    // item_len is near UINT32_MAX, letting a crafted length pass the check and
+    // walk off the buffer.)
+    if (item_len > len - pos) {
       break; // Malformed
     }
 
@@ -1395,10 +1403,9 @@ static void parse_progress(const char *progress_str, uint32_t sample_rate,
     // Values are attacker-supplied; unsigned subtraction would underflow to a
     // huge value if current/end precede start.  Only compute when the ordering
     // is sane and sample_rate is non-zero, otherwise report 0.
-    meta->position_secs =
-        (sample_rate > 0 && current >= start)
-            ? (uint32_t)((current - start) / sample_rate)
-            : 0;
+    meta->position_secs = (sample_rate > 0 && current >= start)
+                              ? (uint32_t)((current - start) / sample_rate)
+                              : 0;
     meta->duration_secs = (sample_rate > 0 && end >= start)
                               ? (uint32_t)((end - start) / sample_rate)
                               : 0;

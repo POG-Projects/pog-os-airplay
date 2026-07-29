@@ -9,7 +9,7 @@
 static const char *TAG = "amp_ctrl";
 
 // Cached configuration (mirrors the NVS protection settings).
-static int g_gpio = -1;          // -1 = disabled
+static int g_gpio = -1;           // -1 = disabled
 static bool g_active_high = true; // amp enabled when GPIO high
 static int g_standby_min = 5;     // 0 = never auto-standby
 
@@ -17,6 +17,11 @@ static int g_standby_min = 5;     // 0 = never auto-standby
 static esp_timer_handle_t g_standby_timer = NULL;
 // Tracks the level we last drove so we avoid redundant GPIO writes / logs.
 static bool g_is_active = false;
+// True between a "playing" and the next "paused/disconnected" event. Read from
+// the esp_timer task, so volatile: lets the standby callback ignore itself if
+// playback resumed after it was queued, and lets a live reconfigure re-arm
+// standby correctly.
+static volatile bool g_playing = false;
 
 // Drive the GPIO to the amp-ACTIVE or amp-STANDBY level per the polarity.
 static void drive_amp(bool active) {
@@ -34,6 +39,12 @@ static void drive_amp(bool active) {
 
 static void standby_timer_cb(void *arg) {
   (void)arg;
+  // If playback resumed after this callback was already queued (a cancel/fire
+  // race across the RTSP, timer and config tasks), do NOT mute — that would cut
+  // live audio.
+  if (g_playing) {
+    return;
+  }
   // Idle timeout elapsed: mute the amp to kill hiss and save power.
   drive_amp(false);
 }
@@ -67,12 +78,14 @@ static void on_rtsp_event(rtsp_event_t event, const rtsp_event_data_t *data,
   case RTSP_EVENT_METADATA:
     // Playback is (or is becoming) active: power the amp and cancel any
     // pending standby.
+    g_playing = true;
     cancel_standby_timer();
     drive_amp(true);
     break;
   case RTSP_EVENT_PAUSED:
   case RTSP_EVENT_DISCONNECTED:
     // Idle: arm the one-shot standby timer (no-op if standby_min == 0).
+    g_playing = false;
     start_standby_timer();
     break;
   default:
@@ -92,10 +105,10 @@ static void apply_config(void) {
                           &standby_min);
 
   // Preserve the current amp state across a live reconfigure. Otherwise saving
-  // any setting (the web/app config POST calls amp_ctrl_reconfigure) while audio
-  // is playing would mute the amp and never re-wake it — no new RTSP "playing"
-  // event arrives mid-stream, so the sound cuts and never resumes. At boot
-  // g_is_active is false, so this still starts in standby as intended.
+  // any setting (the web/app config POST calls amp_ctrl_reconfigure) while
+  // audio is playing would mute the amp and never re-wake it — no new RTSP
+  // "playing" event arrives mid-stream, so the sound cuts and never resumes. At
+  // boot g_is_active is false, so this still starts in standby as intended.
   bool was_active = g_is_active;
 
   cancel_standby_timer();
@@ -129,6 +142,13 @@ static void apply_config(void) {
   // live settings change). If it stays idle, the next RTSP idle event re-arms
   // the standby timer.
   drive_amp(was_active);
+  // If we restored an ACTIVE amp but we're not actually playing (a live
+  // reconfigure during a pause/idle window cancelled the pending standby
+  // above), re-arm it — otherwise auto-standby would be silently disabled until
+  // the next play→pause cycle.
+  if (was_active && !g_playing) {
+    start_standby_timer();
+  }
   ESP_LOGI(TAG, "Amp control on GPIO%d (active_%s, standby=%d min)", g_gpio,
            g_active_high ? "high" : "low", g_standby_min);
 }
@@ -153,4 +173,6 @@ void amp_ctrl_init(void) {
   }
 }
 
-void amp_ctrl_reconfigure(void) { apply_config(); }
+void amp_ctrl_reconfigure(void) {
+  apply_config();
+}
