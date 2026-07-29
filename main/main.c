@@ -16,6 +16,7 @@
 #include "hap.h"
 #include "mdns_airplay.h"
 #include "pogdev_discovery.h"
+#include "pogdev_enrol.h"
 #include "nvs_flash.h"
 #include "playback_control.h"
 #include "ptp_clock.h"
@@ -70,6 +71,11 @@ static void start_airplay_services(void) {
      * sans serveur reste une enceinte. */
     if (pogdev_discovery_start() != ESP_OK) {
       ESP_LOGW(TAG, "pogdev: la recherche du serveur n'a pas pu démarrer");
+    }
+    char pog_name[65] = {0};
+    settings_get_device_name(pog_name, sizeof(pog_name));
+    if (pogdev_enrol_start(pog_name) != ESP_OK) {
+      ESP_LOGW(TAG, "pogdev: l'enrôlement n'a pas pu démarrer");
     }
     s_airplay_infrastructure_ready = true;
   }
