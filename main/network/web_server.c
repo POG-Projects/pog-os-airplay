@@ -95,16 +95,18 @@ static esp_err_t serve_spiffs_file(httpd_req_t *req, const char *path,
 /* Latest AirPlay metadata, kept up to date by an RTSP event listener so the
    open /api/nowplaying endpoint can serve it without touching the RTSP layer.
    Strings are bounded copies of the rtsp_metadata_t fields. */
-typedef struct {
-  bool playing;
-  char title[METADATA_STRING_MAX];
-  char artist[METADATA_STRING_MAX];
-  char album[METADATA_STRING_MAX];
-  uint32_t position_secs;
-  uint32_t duration_secs;
-} nowplaying_t;
+static web_server_nowplaying_t s_nowplaying;
+static void (*s_nowplaying_observer)(void);
 
-static nowplaying_t s_nowplaying;
+void web_server_get_nowplaying(web_server_nowplaying_t *out) {
+  if (out != NULL) {
+    *out = s_nowplaying;
+  }
+}
+
+void web_server_set_nowplaying_observer(void (*cb)(void)) {
+  s_nowplaying_observer = cb;
+}
 
 static void nowplaying_clear_metadata(void) {
   s_nowplaying.title[0] = '\0';
@@ -117,6 +119,15 @@ static void nowplaying_clear_metadata(void) {
 static void on_rtsp_event_nowplaying(rtsp_event_t event,
                                      const rtsp_event_data_t *data,
                                      void *user_data) {
+  /* Ce qui identifie une piste, par opposition à sa progression : c'est sur ce
+     triplet qu'un observateur veut être réveillé. La position avance chaque
+     seconde et réveiller à chaque fois inonderait ce qui écoute. */
+  const bool was_playing = s_nowplaying.playing;
+  char was_title[METADATA_STRING_MAX];
+  char was_artist[METADATA_STRING_MAX];
+  strlcpy(was_title, s_nowplaying.title, sizeof(was_title));
+  strlcpy(was_artist, s_nowplaying.artist, sizeof(was_artist));
+
   switch (event) {
   case RTSP_EVENT_CLIENT_CONNECTED:
   case RTSP_EVENT_PLAYING:
@@ -152,6 +163,13 @@ static void on_rtsp_event_nowplaying(rtsp_event_t event,
       s_nowplaying.playing = true;
     }
     break;
+  }
+
+  if (s_nowplaying_observer != NULL &&
+      (was_playing != s_nowplaying.playing ||
+       strcmp(was_title, s_nowplaying.title) != 0 ||
+       strcmp(was_artist, s_nowplaying.artist) != 0)) {
+    s_nowplaying_observer();
   }
 }
 

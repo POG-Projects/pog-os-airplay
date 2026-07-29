@@ -9,7 +9,6 @@
 
 #include "cJSON.h"
 #include "esp_log.h"
-#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
@@ -23,66 +22,27 @@ static const char *TAG = "pogdev";
 static esp_mqtt_client_handle_t s_client;
 static pogdev_creds_t s_creds;
 static pogdev_cmd_handler s_handler;
+static pogdev_describe_fn s_describe;
+static pogdev_state_fn s_state;
 static char s_topic_hello[96], s_topic_state[96], s_topic_status[96], s_topic_cmd[96];
 
 /* ---- le descripteur ----
  *
- * Ce que l'enceinte déclare savoir faire. Deux entités seulement pour l'instant,
- * mais chacune est réelle :
- *
- *  - `transport` porte le trait `action`, dont les commandes sont déclarées ICI
- *    plutôt que dans le registre du serveur. C'est la raison d'être des traits
- *    dynamiques : le vocabulaire d'un transport est propre à l'appareil, comme
- *    celui d'une sirène Zigbee. Elles sont marquées réversibles parce qu'elles
- *    le sont vraiment — play_pause bascule, volume_up s'annule par volume_down —
- *    ce qui les garde au niveau « act » et non « act_sensitive ».
- *
- *  - `wifi` est un diagnostic. Le serveur ne l'exposera pas à l'assistant, sa
- *    liste de `kind` visibles ne contient pas `rssi` : un capteur de qualité de
- *    signal n'a rien à faire dans le contexte d'un modèle.
+ * Le composant n'invente aucune entité : il pose l'enveloppe (protocole,
+ * identité, local_rules) et laisse l'application remplir la liste. Un firmware
+ * sait ce qu'il expose ; ce fichier ne peut pas le savoir.
  */
 static char *build_hello(void) {
   cJSON *root = cJSON_CreateObject();
   cJSON_AddNumberToObject(root, "proto", 1);
   cJSON_AddStringToObject(root, "hw_id", pogdev_hw_id());
-  cJSON_AddStringToObject(root, "model", "POG AirPlay (XIAO S3)");
+  cJSON_AddStringToObject(root, "model", POGDEV_MODEL);
   cJSON_AddStringToObject(root, "fw_version", POGDEV_FW_VERSION);
 
   cJSON *entities = cJSON_AddArrayToObject(root, "entities");
-
-  /* transport */
-  cJSON *transport = cJSON_CreateObject();
-  cJSON_AddStringToObject(transport, "key", "transport");
-  cJSON_AddStringToObject(transport, "name", "Lecture");
-  cJSON *t_traits = cJSON_AddArrayToObject(transport, "traits");
-  cJSON *action = cJSON_CreateObject();
-  cJSON_AddStringToObject(action, "id", "action");
-  cJSON *cfg = cJSON_AddObjectToObject(action, "config");
-  cJSON *cmds = cJSON_AddArrayToObject(cfg, "commands");
-  static const char *names[] = {"play_pause", "next", "prev", "volume_up", "volume_down"};
-  static const char *labels[] = {"Lecture / pause", "Suivant", "Précédent", "Volume +", "Volume −"};
-  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
-    cJSON *c = cJSON_CreateObject();
-    cJSON_AddStringToObject(c, "name", names[i]);
-    cJSON_AddStringToObject(c, "label", labels[i]);
-    cJSON_AddBoolToObject(c, "reversible", true);
-    cJSON_AddItemToArray(cmds, c);
+  if (s_describe != NULL) {
+    s_describe(entities);
   }
-  cJSON_AddItemToArray(t_traits, action);
-  cJSON_AddItemToArray(entities, transport);
-
-  /* wifi */
-  cJSON *wifi = cJSON_CreateObject();
-  cJSON_AddStringToObject(wifi, "key", "wifi");
-  cJSON_AddStringToObject(wifi, "name", "Signal WiFi");
-  cJSON *w_traits = cJSON_AddArrayToObject(wifi, "traits");
-  cJSON *meas = cJSON_CreateObject();
-  cJSON_AddStringToObject(meas, "id", "measurement");
-  cJSON *w_cfg = cJSON_AddObjectToObject(meas, "config");
-  cJSON_AddStringToObject(w_cfg, "kind", "rssi");
-  cJSON_AddStringToObject(w_cfg, "unit", "dBm");
-  cJSON_AddItemToArray(w_traits, meas);
-  cJSON_AddItemToArray(entities, wifi);
 
   /* Réservé dès la v1 même vide : c'est le champ qu'on ne pourra pas ajouter
    * plus tard sans reflasher tout le parc. */
@@ -94,22 +54,11 @@ static char *build_hello(void) {
 }
 
 static void publish_state(void) {
-  if (s_client == NULL) {
+  if (s_client == NULL || s_state == NULL) {
     return;
   }
-  wifi_ap_record_t ap;
-  int rssi = 0;
-  if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-    rssi = ap.rssi;
-  }
-
   cJSON *root = cJSON_CreateObject();
-  cJSON *wifi = cJSON_AddObjectToObject(root, "wifi");
-  cJSON_AddNumberToObject(wifi, "value", rssi);
-  cJSON_AddStringToObject(wifi, "kind", "rssi");
-  /* `transport` n'a pas d'état : le trait `action` est en écriture seule. On le
-   * publie quand même vide, pour que le serveur voie l'entité vivante. */
-  cJSON_AddItemToObject(root, "transport", cJSON_CreateObject());
+  s_state(root);
 
   char *json = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
@@ -186,10 +135,15 @@ static void state_task(void *arg) {
   }
 }
 
-esp_err_t pogdev_bus_start(pogdev_cmd_handler handler) {
+void pogdev_bus_notify(void) { publish_state(); }
+
+esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
+                           pogdev_cmd_handler handler) {
   if (!pogdev_enrol_get(&s_creds)) {
     return ESP_ERR_INVALID_STATE; /* pas encore adopté */
   }
+  s_describe = describe;
+  s_state = state;
   s_handler = handler;
 
   snprintf(s_topic_hello, sizeof(s_topic_hello), "pog/%s/hello", s_creds.device_id);

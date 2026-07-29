@@ -17,6 +17,10 @@ extern "C" {
  * pogdev, pas ce qu'il sait faire de l'audio. */
 #define POGDEV_FW_VERSION "0.1.0"
 
+/* Modèle annoncé à l'adoption et dans le descripteur. Une seule définition,
+ * pour que les deux ne puissent pas diverger. */
+#define POGDEV_MODEL "POG AirPlay (XIAO S3)"
+
 /* Ce qu'on reçoit à l'adoption, une seule fois. */
 typedef struct {
   char device_id[48];      /* identifiant attribué par pog Home */
