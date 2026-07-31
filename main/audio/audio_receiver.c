@@ -579,6 +579,8 @@ void audio_receiver_get_runtime_stats(audio_runtime_stats_t *stats) {
   stats->buffer_frames =
       (uint32_t)audio_buffer_get_frame_count(&receiver.buffer);
   stats->buffer_capacity_frames = MAX_RING_BUFFER_FRAMES;
+  stats->buffer_samples =
+      (uint32_t)audio_buffer_get_sample_count(&receiver.buffer);
   stats->output_latency_us = audio_timing_get_output_latency(&receiver.timing);
   stats->advertised_latency_us =
       audio_timing_get_advertised_latency(&receiver.timing);

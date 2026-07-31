@@ -1998,16 +1998,11 @@ static esp_err_t audio_stats_handler(httpd_req_t *req) {
   audio_output_get_runtime_stats(&output);
   ptp_clock_get_stats(&ptp);
 
-  uint32_t frame_samples = audio.format.frame_size > 0
-                               ? (uint32_t)audio.format.frame_size
-                               : (audio.format.max_samples_per_frame > 0
-                                      ? audio.format.max_samples_per_frame
-                                      : 352U);
-  uint32_t buffer_ms = audio.format.sample_rate > 0
-                           ? (uint32_t)(((uint64_t)audio.buffer_frames *
-                                         frame_samples * 1000ULL) /
-                                        (uint32_t)audio.format.sample_rate)
-                           : 0;
+  uint32_t buffer_ms =
+      audio.format.sample_rate > 0
+          ? (uint32_t)(((uint64_t)audio.buffer_samples * 1000ULL) /
+                       (uint32_t)audio.format.sample_rate)
+          : 0;
 
   cJSON *json = cJSON_CreateObject();
   cJSON_AddBoolToObject(json, "success", true);
@@ -2023,6 +2018,7 @@ static esp_err_t audio_stats_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(json, "buffer_frames", audio.buffer_frames);
   cJSON_AddNumberToObject(json, "buffer_capacity_frames",
                           audio.buffer_capacity_frames);
+  cJSON_AddNumberToObject(json, "buffer_samples", audio.buffer_samples);
   cJSON_AddNumberToObject(json, "buffer_ms", buffer_ms);
   cJSON_AddNumberToObject(json, "output_latency_us", audio.output_latency_us);
   cJSON_AddNumberToObject(json, "advertised_latency_us",

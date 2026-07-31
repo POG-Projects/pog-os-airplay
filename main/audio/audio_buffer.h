@@ -35,6 +35,7 @@ typedef struct {
   uint16_t *sorted;             // Slot indices sorted by RTP timestamp
   uint16_t *free_stack;         // Stack of free slot indices
   int count;                    // Frames currently in buffer
+  size_t sample_count;          // Exact per-channel PCM samples buffered
   int free_top;                 // Top of free stack (next free slot)
   int capacity;                 // Max frames
   size_t slot_size;             // BYTES_PER_FRAME
@@ -49,6 +50,7 @@ esp_err_t audio_buffer_init(audio_buffer_t *buffer);
 void audio_buffer_deinit(audio_buffer_t *buffer);
 void audio_buffer_flush(audio_buffer_t *buffer);
 int audio_buffer_get_frame_count(audio_buffer_t *buffer);
+size_t audio_buffer_get_sample_count(audio_buffer_t *buffer);
 bool audio_buffer_is_nearly_full(audio_buffer_t *buffer);
 bool audio_buffer_take(audio_buffer_t *buffer, void **item, size_t *item_size,
                        TickType_t ticks);

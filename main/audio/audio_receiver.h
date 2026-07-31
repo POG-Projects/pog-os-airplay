@@ -65,6 +65,7 @@ typedef struct {
   int stream_type;
   uint32_t buffer_frames;
   uint32_t buffer_capacity_frames;
+  uint32_t buffer_samples;
   uint32_t output_latency_us;
   uint32_t advertised_latency_us;
   bool playing;

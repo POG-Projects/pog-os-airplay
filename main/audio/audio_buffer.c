@@ -74,9 +74,14 @@ static bool audio_buffer_queue_chunk(audio_buffer_t *buffer,
   /* Overflow protection: drain oldest frames if at capacity */
   while (buffer->count >= buffer->capacity && buffer->count > 0) {
     uint16_t victim = buffer->sorted[0];
+    uint16_t victim_samples =
+        ((audio_frame_header_t *)slot_ptr(buffer, victim))->samples_per_channel;
     memmove(&buffer->sorted[0], &buffer->sorted[1],
             (buffer->count - 1) * sizeof(uint16_t));
     buffer->count--;
+    buffer->sample_count = buffer->sample_count >= victim_samples
+                               ? buffer->sample_count - victim_samples
+                               : 0;
     buffer->free_stack[buffer->free_top++] = victim;
     /* Take one token from the semaphore to keep it in sync */
     xSemaphoreTakeFromISR(buffer->data_ready, NULL);
@@ -118,6 +123,7 @@ static bool audio_buffer_queue_chunk(audio_buffer_t *buffer,
   }
   buffer->sorted[pos] = slot;
   buffer->count++;
+  buffer->sample_count += samples;
 
   portEXIT_CRITICAL(&buffer->lock);
 
@@ -144,6 +150,7 @@ esp_err_t audio_buffer_init(audio_buffer_t *buffer) {
   buffer->capacity = MAX_RING_BUFFER_FRAMES;
   buffer->slot_size = BYTES_PER_FRAME;
   buffer->count = 0;
+  buffer->sample_count = 0;
 
   /* Pool in PSRAM */
   buffer->pool =
@@ -224,6 +231,7 @@ void audio_buffer_deinit(audio_buffer_t *buffer) {
   }
 
   buffer->count = 0;
+  buffer->sample_count = 0;
   buffer->free_top = 0;
 }
 
@@ -241,6 +249,7 @@ void audio_buffer_flush(audio_buffer_t *buffer) {
     buffer->free_stack[buffer->free_top++] = buffer->sorted[i];
   }
   buffer->count = 0;
+  buffer->sample_count = 0;
 
   portEXIT_CRITICAL(&buffer->lock);
 
@@ -261,6 +270,18 @@ int audio_buffer_get_frame_count(audio_buffer_t *buffer) {
   frames = buffer->count;
   portEXIT_CRITICAL(&buffer->lock);
   return frames;
+}
+
+size_t audio_buffer_get_sample_count(audio_buffer_t *buffer) {
+  if (!buffer) {
+    return 0;
+  }
+
+  size_t samples = 0;
+  portENTER_CRITICAL(&buffer->lock);
+  samples = buffer->sample_count;
+  portEXIT_CRITICAL(&buffer->lock);
+  return samples;
 }
 
 /* ---------- nearly full check (for back-pressure) ---------- */
@@ -301,6 +322,8 @@ bool audio_buffer_take(audio_buffer_t *buffer, void **item, size_t *item_size,
   }
 
   uint16_t slot = buffer->sorted[0];
+  uint16_t slot_samples =
+      ((audio_frame_header_t *)slot_ptr(buffer, slot))->samples_per_channel;
 
   /* Shift remaining indices left */
   if (buffer->count > 1) {
@@ -308,6 +331,9 @@ bool audio_buffer_take(audio_buffer_t *buffer, void **item, size_t *item_size,
             (buffer->count - 1) * sizeof(uint16_t));
   }
   buffer->count--;
+  buffer->sample_count = buffer->sample_count >= slot_samples
+                             ? buffer->sample_count - slot_samples
+                             : 0;
 
   portEXIT_CRITICAL(&buffer->lock);
 
