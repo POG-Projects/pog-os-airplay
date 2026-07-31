@@ -43,8 +43,8 @@ const char *pogdev_hw_id(void);
 /* Version de firmware annoncée à l'enrôlement et dans le `hello` ; c'est elle
  * que pog Home enregistre dans `devices.sw_version`.
  *
- * Elle est lue dans le descripteur d'application ESP-IDF, donc dans PROJECT_VER,
- * donc dans version.txt : la même source que `firmware_version` de
+ * Elle est lue dans le descripteur d'application ESP-IDF, donc dans
+ * PROJECT_VER, donc dans version.txt : la même source que `firmware_version` de
  * /api/system/info et que la comparaison OTA. Le choix précédent — un littéral
  * figé dans cet en-tête — laissait tout le parc annoncer 0.1.0 : deux firmwares
  * différents devenaient indiscernables, et un `hello` légitime a été pris pour
@@ -62,16 +62,17 @@ const char *pogdev_fw_version(void);
  * accident into a soldering-iron problem. A firmware update wiped a speaker's
  * MQTT settings; the server had no matching account any more; and the device
  * could not go back to the enrolment queue because `enrol_task` reads NVS first
- * and deletes itself the moment it finds credentials. It sat on the LAN, healthy
- * and refused by the broker every ten seconds, and the only way out was USB.
+ * and deletes itself the moment it finds credentials. It sat on the LAN,
+ * healthy and refused by the broker every ten seconds, and the only way out was
+ * USB.
  *
  * The caller MUST restart afterwards, and that is not a courtesy: `enrol_task`
  * has already deleted itself by then, so nothing re-reads this. The erase alone
  * changes nothing until the next boot.
  *
- * Erases the whole namespace rather than key by key — a half-erased enrolment is
- * worse than either state, since `load_state()` needs three keys together and
- * would find some of them.
+ * Erases the whole namespace rather than key by key — a half-erased enrolment
+ * is worse than either state, since `load_state()` needs three keys together
+ * and would find some of them.
  */
 esp_err_t pogdev_forget(void);
 

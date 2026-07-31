@@ -397,7 +397,8 @@ esp_err_t pogdev_forget(void) {
     s_have_creds = false;
     xSemaphoreGive(s_lock);
     memset(s_claim_secret, 0, sizeof(s_claim_secret));
-    ESP_LOGW(TAG, "enrôlement effacé — redémarrage nécessaire pour se réannoncer");
+    ESP_LOGW(TAG,
+             "enrôlement effacé — redémarrage nécessaire pour se réannoncer");
   }
   return err;
 }
