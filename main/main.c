@@ -39,7 +39,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+
+
 static const char *TAG = "main";
+
+/* Le rappel d'adoption : `main` démarre le bus, le composant ne peut pas. */
+static void pogdev_bus_start_after_adoption(void) {
+  if (pogdev_app_start() == ESP_OK) {
+    ESP_LOGI(TAG, "pogdev: adopté — bus MQTT démarré sans redémarrage");
+  } else {
+    ESP_LOGW(TAG, "pogdev: adopté mais le bus n'a pas démarré");
+  }
+}
 
 // AP mode IP address (192.168.4.1 in network byte order)
 #define AP_IP_ADDR 0x0104A8C0
@@ -75,11 +86,13 @@ static void start_airplay_services(void) {
     }
     char pog_name[65] = {0};
     settings_get_device_name(pog_name, sizeof(pog_name));
-    if (pogdev_enrol_start(pog_name) != ESP_OK) {
+    if (pogdev_enrol_start(pog_name, pogdev_bus_start_after_adoption) != ESP_OK) {
       ESP_LOGW(TAG, "pogdev: l'enrôlement n'a pas pu démarrer");
     }
-    /* Le bus ne démarre que si l'appareil est déjà adopté ; sinon il le fera
-     * au prochain redémarrage, une fois l'adoption faite. */
+    /* Au démarrage, ceci ne réussit que si l'appareil était DÉJÀ adopté. S'il
+     * vient de l'être, le rappel passé ci-dessus démarre le bus dans la
+     * foulée — sinon l'appareil restait enrôlé et muet jusqu'au prochain
+     * redémarrage, et s'affichait dans la maison sans une seule capacité. */
     if (pogdev_app_start() == ESP_OK) {
       ESP_LOGI(TAG, "pogdev: bus MQTT démarré");
     }

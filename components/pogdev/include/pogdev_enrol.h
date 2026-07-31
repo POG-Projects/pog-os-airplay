@@ -24,6 +24,22 @@ typedef struct {
   char mqtt_password[80]; /* 256 bits en hexadécimal */
 } pogdev_creds_t;
 
+/* Appelé une fois, juste après que les identifiants d'adoption ont été relevés
+ * et écrits en NVS.
+ *
+ * Il existe parce que le bus MQTT ne démarrait qu'au boot : un appareil adopté
+ * depuis pog Console restait enrôlé et muet jusqu'à ce que quelqu'un aille le
+ * redémarrer. Il apparaissait dans la maison sans une seule capacité, ce qui se
+ * lit comme une adoption ratée.
+ *
+ * C'est un rappel et non un appel direct : `main` démarre le bus, et un
+ * composant qui dépendrait de `main` formerait le cycle que CMake écarte
+ * silencieusement — la raison pour laquelle `device_name` est déjà un paramètre.
+ *
+ * Appelé depuis la tâche d'enrôlement, une seule fois, juste avant qu'elle se
+ * termine. */
+typedef void (*pogdev_adopted_cb)(void);
+
 /* Démarre l'enrôlement en tâche de fond : s'annonce tant qu'on n'est pas
  * adopté, puis relève les identifiants et les enregistre en NVS. Sans effet si
  * l'appareil est déjà enrôlé.
@@ -32,7 +48,7 @@ typedef struct {
  * passé en paramètre plutôt que lu depuis les réglages, pour que le composant
  * ne dépende de rien de l'application — un composant qui dépendrait de `main`
  * formerait un cycle, et CMake l'écarte silencieusement. */
-esp_err_t pogdev_enrol_start(const char *device_name);
+esp_err_t pogdev_enrol_start(const char *device_name, pogdev_adopted_cb on_adopted);
 
 /* Identifiants enregistrés. false tant que l'appareil n'a pas été adopté. */
 bool pogdev_enrol_get(pogdev_creds_t *out);

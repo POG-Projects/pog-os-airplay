@@ -44,6 +44,7 @@ static const char *TAG = "pogdev";
 
 static pogdev_creds_t s_creds;
 static bool s_have_creds;
+static pogdev_adopted_cb s_on_adopted = NULL;
 static SemaphoreHandle_t s_lock;
 static portMUX_TYPE s_lock_init_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool s_forgetting;
@@ -366,6 +367,13 @@ static void enrol_task(void *arg) {
      * serveur (elle expire au bout de 30 min) et met à jour « vu il y a … ». */
     announce(&srv);
     if (collect(&srv)) {
+      /* Les identifiants sont en NVS à ce point (collect les écrit avant de
+       * rendre true), donc le bus a tout ce qu'il lui faut. Sans ceci il
+       * attendait le prochain démarrage, et l'appareil s'affichait adopté et
+       * sans aucune capacité. */
+      if (s_on_adopted != NULL) {
+        s_on_adopted();
+      }
       break;
     }
 
@@ -381,10 +389,11 @@ static void enrol_task(void *arg) {
   vTaskDelete(NULL);
 }
 
-esp_err_t pogdev_enrol_start(const char *device_name) {
+esp_err_t pogdev_enrol_start(const char *device_name, pogdev_adopted_cb on_adopted) {
   if (device_name != NULL) {
     strlcpy(s_device_name, device_name, sizeof(s_device_name));
   }
+  s_on_adopted = on_adopted;
   esp_err_t lock_err = ensure_state_lock();
   if (lock_err != ESP_OK) {
     return lock_err;
