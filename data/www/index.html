@@ -721,6 +721,17 @@ select option{background:#18181b;color:var(--txt)}
   <div class='row'><span class='lbl'>Profil OTA</span><span class='val' id='info-ota-env'>–</span></div>
 </div></div>
 
+<div class='grp'><h2>Performances audio</h2><div class='card'>
+  <div class='row'><span class='lbl'>Flux</span><span class='val' id='audio-format'>–</span></div>
+  <div class='row'><span class='lbl'>Tampon</span><span class='val' id='audio-buffer'>–</span></div>
+  <div class='row'><span class='lbl'>Latence DMA</span><span class='val' id='audio-dma'>–</span></div>
+  <div class='row'><span class='lbl'>Traitement DSP</span><span class='val' id='audio-dsp'>–</span></div>
+  <div class='row'><span class='lbl'>Paquets perdus</span><span class='val' id='audio-dropped'>–</span></div>
+  <div class='row'><span class='lbl'>Sous-alimentations</span><span class='val' id='audio-underruns'>–</span></div>
+  <div class='row'><span class='lbl'>Trames tardives</span><span class='val' id='audio-late'>–</span></div>
+  <div class='row'><span class='lbl'>Horloge PTP</span><span class='val' id='audio-ptp'>–</span></div>
+</div></div>
+
 <div class='grp'><h2>Mise à jour</h2><div class='card'><div class='pad'>
   <button class='btn sec' id='ota-check-btn' onclick='checkOTA(true)'>Rechercher une mise à jour</button>
   <button class='btn' id='ota-auto-btn' onclick='installLatestOTA()' disabled>Installer la mise à jour</button>
@@ -845,11 +856,11 @@ function showPanel(){
   showView('view-panel');
   setTab(getTab());                       /* restore last-viewed tab */
   var ll=document.getElementById('logs-link');if(ll)ll.href=wsUrl();
-  loadGain();loadTone();loadArgb();loadButtons();loadProtection();loadInfo();loadNowPlaying();loadMqtt();
+  loadGain();loadTone();loadArgb();loadButtons();loadProtection();loadInfo();loadNowPlaying();loadMqtt();loadAudioStats();
   if(!showPanel._iv)showPanel._iv=setInterval(function(){loadInfo();loadMqtt();},30000);
   /* poll now-playing more often while the panel is visible */
   if(!showPanel._npiv)showPanel._npiv=setInterval(function(){
-    if(!document.getElementById('view-panel').hidden&&!document.hidden)loadNowPlaying();
+    if(!document.getElementById('view-panel').hidden&&!document.hidden){loadNowPlaying();loadAudioStats();}
   },5000);
   /* tick the progress bar forward between polls so it advances smoothly */
   if(!showPanel._npt)showPanel._npt=setInterval(npRender,1000);
@@ -1317,6 +1328,20 @@ async function loadInfo(){
       if(i.eq_supported){document.getElementById('eq-card').style.display='';}
       document.getElementById('dev-name').placeholder=i.device_name||'Mon enceinte';
       if(!loadInfo._otaChecked){loadInfo._otaChecked=true;checkOTA(false);}}}catch(e){}}
+async function loadAudioStats(){
+  try{var r=await authFetch('/api/audio/stats',{cache:'no-store'});if(!r.ok)return;var d=await r.json();
+    if(!d.success)return;
+    var codec=d.codec||'–',rate=d.sample_rate?Math.round(d.sample_rate/100)/10+' kHz':'–';
+    document.getElementById('audio-format').textContent=codec+' · '+rate+' · '+(d.channels||0)+' ch';
+    document.getElementById('audio-buffer').textContent=d.buffer_frames+'/'+d.buffer_capacity_frames+' · '+d.buffer_ms+' ms';
+    document.getElementById('audio-dma').textContent=(d.hardware_latency_us/1000).toFixed(1)+' ms · '+d.dma_descriptors+'×'+d.dma_frames;
+    document.getElementById('audio-dsp').textContent=d.process_avg_us+' µs moy. · '+d.process_max_us+' µs max';
+    document.getElementById('audio-dropped').textContent=String(d.packets_dropped||0);
+    document.getElementById('audio-underruns').textContent=String(d.buffer_underruns||0);
+    document.getElementById('audio-late').textContent=String(d.late_frames||0);
+    document.getElementById('audio-ptp').textContent=d.ptp_locked?'Verrouillée · '+(d.ptp_offset_ns/1000).toFixed(0)+' µs':'Non verrouillée';
+  }catch(e){}
+}
 window.onload=function(){
   document.getElementById('fw-file').onchange=function(e){var f=e.target.files[0];
     document.getElementById('fw-name').textContent=f?f.name:'Aucun fichier';

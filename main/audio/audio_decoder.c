@@ -80,14 +80,24 @@ static bool aac_has_adts_header(const uint8_t *data, size_t len) {
   return len >= 2 && data[0] == 0xFF && (data[1] & 0xF0) == 0xF0;
 }
 
-static void build_adts_header(uint8_t *header, size_t frame_len,
+static bool build_adts_header(uint8_t *header, size_t frame_len,
                               int sample_rate, int channels) {
-  (void)sample_rate;
-  (void)channels;
+  static const int rates[] = {96000, 88200, 64000, 48000, 44100, 32000, 24000,
+                              22050, 16000, 12000, 11025, 8000,  7350};
+  int freq_idx = -1;
+  for (int i = 0; i < (int)(sizeof(rates) / sizeof(rates[0])); i++) {
+    if (rates[i] == sample_rate) {
+      freq_idx = i;
+      break;
+    }
+  }
+  if (freq_idx < 0 || channels < 1 || channels > 7 ||
+      frame_len > 0x1FFF - ADTS_HEADER_LEN) {
+    return false;
+  }
 
-  int profile = 2;
-  int freq_idx = 4;
-  int chan_cfg = 2;
+  int profile = 2; // AAC-LC object type
+  int chan_cfg = channels;
   int packet_len = (int)(frame_len + ADTS_HEADER_LEN);
 
   header[0] = 0xFF;
@@ -97,6 +107,7 @@ static void build_adts_header(uint8_t *header, size_t frame_len,
   header[4] = (packet_len & 0x7FF) >> 3;
   header[5] = ((packet_len & 7) << 5) + 0x1F;
   header[6] = 0xFC;
+  return true;
 }
 
 audio_decoder_t *audio_decoder_create(const audio_decoder_config_t *config) {
@@ -272,8 +283,13 @@ int audio_decoder_decode(audio_decoder_t *decoder, const uint8_t *input,
         decoder->aac_frame_buffer_size = needed;
       }
 
-      build_adts_header(decoder->aac_frame_buffer, input_len,
-                        decoder->format.sample_rate, decoder->format.channels);
+      if (!build_adts_header(decoder->aac_frame_buffer, input_len,
+                             decoder->format.sample_rate,
+                             decoder->format.channels)) {
+        ESP_LOGE(TAG, "Unsupported AAC ADTS format: %d Hz, %d channels",
+                 decoder->format.sample_rate, decoder->format.channels);
+        return -1;
+      }
       memcpy(decoder->aac_frame_buffer + ADTS_HEADER_LEN, input, input_len);
       decode_data = decoder->aac_frame_buffer;
       decode_len = needed;

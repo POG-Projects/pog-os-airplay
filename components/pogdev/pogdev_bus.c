@@ -17,7 +17,8 @@
 
 static const char *TAG = "pogdev";
 
-#define STATE_PERIOD_MS 30000
+#define STATE_PERIOD_MS           30000
+#define MQTT_RECONNECT_TIMEOUT_MS 60000
 
 static esp_mqtt_client_handle_t s_client;
 static pogdev_creds_t s_creds;
@@ -181,6 +182,7 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
       .session.last_will.qos = 1,
       .session.last_will.retain = 1,
       .session.keepalive = 30,
+      .network.reconnect_timeout_ms = MQTT_RECONNECT_TIMEOUT_MS,
   };
 
   s_client = esp_mqtt_client_init(&cfg);

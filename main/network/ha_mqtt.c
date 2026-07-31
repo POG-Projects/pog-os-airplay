@@ -30,7 +30,8 @@ static const char *TAG = "ha_mqtt";
 
 /* Refresh all state topics every ~30s so HA stays in sync with changes that
    happen outside this module (web API, physical buttons). */
-#define REFRESH_PERIOD_MS 30000
+#define REFRESH_PERIOD_MS         30000
+#define MQTT_RECONNECT_TIMEOUT_MS 60000
 
 static esp_mqtt_client_handle_t s_client = NULL;
 static volatile bool s_connected = false;
@@ -626,6 +627,7 @@ static void start_client(void) {
   cfg.session.last_will.qos = 1;
   cfg.session.last_will.retain = 1;
   cfg.network.disable_auto_reconnect = false; /* keep retrying the broker */
+  cfg.network.reconnect_timeout_ms = MQTT_RECONNECT_TIMEOUT_MS;
 
   s_client = esp_mqtt_client_init(&cfg);
   if (!s_client) {

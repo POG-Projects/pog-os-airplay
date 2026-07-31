@@ -134,9 +134,9 @@ set_source_files_properties(
     "network/web_index.S"
     PROPERTIES
         COMPILE_DEFINITIONS
-            "WEB_INDEX_HTML_PATH=\"${CMAKE_SOURCE_DIR}/data/www/index.html\""
+            "WEB_INDEX_HTML_PATH=\"${CMAKE_SOURCE_DIR}/data/www/index.html\";WEB_LOGS_HTML_PATH=\"${CMAKE_SOURCE_DIR}/data/www/logs.html\""
         OBJECT_DEPENDS
-            "${CMAKE_SOURCE_DIR}/data/www/index.html"
+            "${CMAKE_SOURCE_DIR}/data/www/index.html;${CMAKE_SOURCE_DIR}/data/www/logs.html"
 )
 
 # Enable function wrapping for abort() to intercept panics and mute GPIO

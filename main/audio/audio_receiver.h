@@ -59,6 +59,19 @@ typedef struct {
   uint32_t last_timestamp;
 } audio_stats_t;
 
+typedef struct {
+  audio_stats_t counters;
+  audio_format_t format;
+  int stream_type;
+  uint32_t buffer_frames;
+  uint32_t buffer_capacity_frames;
+  uint32_t output_latency_us;
+  uint32_t advertised_latency_us;
+  bool playing;
+  bool playout_started;
+  bool anchor_valid;
+} audio_runtime_stats_t;
+
 /**
  * Initialize audio receiver
  */
@@ -94,6 +107,9 @@ void audio_receiver_stop(void);
  * Get audio statistics
  */
 void audio_receiver_get_stats(audio_stats_t *stats);
+
+/** Snapshot stream, buffer and timing state for diagnostics. */
+void audio_receiver_get_runtime_stats(audio_runtime_stats_t *stats);
 
 /**
  * Read decoded PCM samples from buffer

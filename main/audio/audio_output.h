@@ -4,6 +4,17 @@
 
 #include "freertos/FreeRTOS.h"
 
+typedef struct {
+  uint32_t dma_descriptors;
+  uint32_t dma_frames;
+  uint32_t sample_rate;
+  uint32_t hardware_latency_us;
+  uint32_t process_avg_us;
+  uint32_t process_max_us;
+  uint32_t process_calls;
+  uint32_t stack_high_water_words;
+} audio_output_runtime_stats_t;
+
 /**
  * Initialize the audio output backend (I2S / SPDIF / USB UAC).
  */
@@ -66,3 +77,6 @@ void audio_output_set_channel_mode(int mode);
  * stays correct if the DMA config or sample rate is ever changed.
  */
 uint32_t audio_output_get_hardware_latency_us(void);
+
+/** Snapshot lightweight playback/DSP performance counters. */
+void audio_output_get_runtime_stats(audio_output_runtime_stats_t *stats);

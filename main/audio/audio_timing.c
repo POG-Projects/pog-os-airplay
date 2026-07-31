@@ -36,17 +36,9 @@
 #else
 #define RT_TIMING_THRESHOLD_US 50000 // 50ms early/late threshold (realtime)
 #endif
-// MAX_CONSECUTIVE_EARLY: safety valve — counts how many consecutive calls to
-// audio_timing_read returned silence because the pending frame was still too
-// early.  Each call corresponds to one DMA period (~46 ms on I2S at 44100 Hz).
-// 50 calls × 46 ms ≈ 2.3 s: long enough that a legitimate pre-buffer of any
-// realistic depth will never hit it, short enough to detect a genuinely stuck
-// or invalid anchor in a few seconds.
-#define MAX_CONSECUTIVE_EARLY 50
+#define MAX_PENDING_EARLY_US 10000000LL
 
 static const char *TAG = "audio_time";
-// consecutive_early_frames is now a field in audio_timing_t so it resets
-// automatically whenever a new anchor is set.
 
 static uint32_t frame_samples_from_format(const audio_format_t *format) {
   if (format->frame_size > 0) {
@@ -157,8 +149,8 @@ void audio_timing_reset(audio_timing_t *timing) {
   timing->anchor_valid = false;
   timing->pending_valid = false;
   timing->pending_frame_len = 0;
+  timing->pending_since_us = 0;
   timing->ready_time_us = 0;
-  timing->consecutive_early_frames = 0;
   timing->quick_start = false;
   timing->deferred_flush_pending = false;
   timing->flush_until_ts = 0;
@@ -227,7 +219,7 @@ void audio_timing_set_anchor(audio_timing_t *timing,
   timing->anchor_valid = true;
   // Reset frame counters so pre-buffered audio after a pause/resume or
   // track skip does not accumulate into the new anchor's counts.
-  timing->consecutive_early_frames = 0;
+  timing->pending_since_us = 0;
 
   // Compute lead time: how far in the future this anchor's network timestamp
   // is relative to now.  Negative means the anchor is already in the past
@@ -256,6 +248,7 @@ void audio_timing_set_playing(audio_timing_t *timing, bool playing) {
     // the oldest frame in the sorted buffer.
     timing->pending_valid = false;
     timing->pending_frame_len = 0;
+    timing->pending_since_us = 0;
   }
 }
 
@@ -335,6 +328,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       if (item_size < sizeof(audio_frame_header_t)) {
         timing->pending_valid = false;
         timing->pending_frame_len = 0;
+        timing->pending_since_us = 0;
         continue;
       }
       item = timing->pending_frame;
@@ -364,6 +358,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       if (from_pending) {
         timing->pending_valid = false;
         timing->pending_frame_len = 0;
+        timing->pending_since_us = 0;
       } else {
         audio_buffer_return(buffer, item);
       }
@@ -376,6 +371,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       if (from_pending) {
         timing->pending_valid = false;
         timing->pending_frame_len = 0;
+        timing->pending_since_us = 0;
       } else {
         audio_buffer_return(buffer, item);
       }
@@ -399,6 +395,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
         if (from_pending) {
           timing->pending_valid = false;
           timing->pending_frame_len = 0;
+          timing->pending_since_us = 0;
         } else {
           audio_buffer_return(buffer, item);
         }
@@ -406,7 +403,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
         timing->deferred_flush_pending = false;
         timing->playout_started = false;
         timing->ready_time_us = 0;
-        timing->consecutive_early_frames = 0;
+        timing->pending_since_us = 0;
         // quick_start so the first frame of the next track starts playing
         // as soon as 1 frame arrives, with normal anchor timing applied.
         timing->quick_start = true;
@@ -427,42 +424,26 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       if (compute_early_us(timing, format, hdr->rtp_timestamp, sync_mode,
                            &early_us)) {
         if (early_us > timing_threshold_us) {
-          // Only advance the stuck-anchor counter for NEW frames taken from
-          // the buffer — not for pending re-checks of the same early frame.
-          // A pending frame is re-examined every DMA callback (~8 ms) while
-          // we wait for wall-clock to reach its scheduled play time.  Counting
-          // those re-checks would fire the stuck-anchor detector in
-          // (MAX_CONSECUTIVE_EARLY × 8 ms) = 6 s even for a legitimately
-          // early frame that just needs to wait its pre-buffer depth (~1.5 s).
-          if (!from_pending) {
-            timing->consecutive_early_frames++;
-            // Log the first early frame after each anchor set (shows lead
-            // time before audio starts) and every 50 new frames after that
-            // (confirms the counter only counts real buffer reads, not
-            // pending re-checks).
-            if (timing->consecutive_early_frames == 1) {
-              ESP_LOGI(TAG,
-                       "First early frame: rtp=%" PRIu32 " early=%.1f ms"
-                       " quick_start=%d buffered=%d",
-                       hdr->rtp_timestamp, (float)early_us / 1000.0f,
-                       timing->quick_start, buffered_frames);
-            } else if (timing->consecutive_early_frames % 50 == 0) {
-              ESP_LOGD(TAG, "Early counter: %d/%d early=%.1f ms rtp=%" PRIu32,
-                       timing->consecutive_early_frames, MAX_CONSECUTIVE_EARLY,
-                       (float)early_us / 1000.0f, hdr->rtp_timestamp);
-            }
+          int64_t now_us = esp_timer_get_time();
+          if (timing->pending_since_us == 0) {
+            timing->pending_since_us = now_us;
+            ESP_LOGI(TAG,
+                     "First early frame: rtp=%" PRIu32 " early=%.1f ms"
+                     " quick_start=%d buffered=%d",
+                     hdr->rtp_timestamp, (float)early_us / 1000.0f,
+                     timing->quick_start, buffered_frames);
           }
 
-          // If we have had an implausibly long run of early frames the anchor
-          // is probably stuck or wrong — give up on it so playback can
-          // continue.  This threshold is high enough (~17 s at 23 ms/frame)
-          // that it never fires during normal pre-buffered-audio scenarios.
-          if (timing->consecutive_early_frames > MAX_CONSECUTIVE_EARLY) {
+          // Use elapsed wall time, not callback counts: the same pending frame
+          // is rechecked repeatedly and must eventually trip this guard.
+          if (now_us - timing->pending_since_us > MAX_PENDING_EARLY_US) {
             ESP_LOGW(TAG,
-                     "Invalidating stuck anchor: consecutive=%d, early=%lld ms",
-                     timing->consecutive_early_frames, early_us / 1000LL);
+                     "Invalidating stuck anchor: pending=%lld ms, "
+                     "early=%lld ms",
+                     (now_us - timing->pending_since_us) / 1000LL,
+                     early_us / 1000LL);
             timing->anchor_valid = false;
-            timing->consecutive_early_frames = 0;
+            timing->pending_since_us = 0;
             // Fall through to play the frame normally
           } else {
             // Frame is early — store it as pending and output silence.
@@ -482,14 +463,14 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
               memcpy(timing->pending_frame, item, item_size);
               timing->pending_frame_len = item_size;
               timing->pending_valid = true;
+              timing->pending_since_us = now_us;
               audio_buffer_return(buffer, item);
             }
             memset(out, 0, samples * channels * sizeof(int16_t));
             return samples;
           }
         } else if (early_us < -timing_threshold_us) {
-          // Reset consecutive early counter on late/normal frames
-          timing->consecutive_early_frames = 0;
+          timing->pending_since_us = 0;
 
           // Late frame — drop it and continue draining within the SAME call.
           // The 256-attempt drain loop chews through stale frames at zero
@@ -502,6 +483,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
           if (from_pending) {
             timing->pending_valid = false;
             timing->pending_frame_len = 0;
+            timing->pending_since_us = 0;
           } else {
             audio_buffer_return(buffer, item);
           }
@@ -510,8 +492,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       }
     }
 
-    // Frame is on time (or anchor-invalid) — reset counter.
-    timing->consecutive_early_frames = 0;
+    timing->pending_since_us = 0;
 
     // Copy PCM data to output
     memcpy(out, pcm, frame_samples * channels * sizeof(int16_t));
@@ -520,6 +501,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
     if (from_pending) {
       timing->pending_valid = false;
       timing->pending_frame_len = 0;
+      timing->pending_since_us = 0;
     } else {
       audio_buffer_return(buffer, item);
     }

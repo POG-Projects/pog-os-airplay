@@ -24,6 +24,7 @@
 #include "eq_dsp.h"
 #include "audio_limiter.h"
 #include "audio_output.h"
+#include "audio_receiver.h"
 #include "amp_ctrl.h"
 #include "led_argb.h"
 #include "led_matrix.h"
@@ -36,6 +37,7 @@
 #include "rtsp_server.h"
 #include "rtsp_events.h"
 #include "playback_control.h"
+#include "ptp_clock.h"
 #include "esp_app_desc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -56,6 +58,8 @@ static httpd_handle_t s_server = NULL;
    exported by network/web_index.S. */
 extern const char web_index_html_start[] asm("_binary_index_html_start");
 extern const char web_index_html_end[] asm("_binary_index_html_end");
+extern const char web_logs_html_start[] asm("_binary_logs_html_start");
+extern const char web_logs_html_end[] asm("_binary_logs_html_end");
 
 /* Random identifier minted once per boot. The web UI polls /api/system/info
    and reloads itself when this value changes (i.e. after a reboot/OTA). It is
@@ -126,6 +130,14 @@ static esp_err_t serve_embedded_index(httpd_req_t *req) {
 
   httpd_resp_send_chunk(req, NULL, 0);
   return ESP_OK;
+}
+
+static esp_err_t serve_embedded_logs(httpd_req_t *req) {
+  const size_t embedded_len = (size_t)(web_logs_html_end - web_logs_html_start);
+  const size_t len = embedded_len > 0 ? embedded_len - 1 : 0;
+  httpd_resp_set_type(req, "text/html; charset=utf-8");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, web_logs_html_start, (ssize_t)len);
 }
 
 /* esp_http_server may deliver a request body in several TCP reads.
@@ -591,7 +603,7 @@ static esp_err_t favicon_handler(httpd_req_t *req) {
 }
 
 static esp_err_t logs_page_handler(httpd_req_t *req) {
-  return serve_spiffs_file(req, "/spiffs/www/logs.html", "text/html");
+  return serve_embedded_logs(req);
 }
 
 static esp_err_t speedtest_page_handler(httpd_req_t *req) {
@@ -1974,6 +1986,87 @@ static esp_err_t nowplaying_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+static esp_err_t audio_stats_handler(httpd_req_t *req) {
+  if (check_auth(req) != ESP_OK) {
+    return ESP_FAIL;
+  }
+
+  audio_runtime_stats_t audio = {0};
+  audio_output_runtime_stats_t output = {0};
+  ptp_stats_t ptp = {0};
+  audio_receiver_get_runtime_stats(&audio);
+  audio_output_get_runtime_stats(&output);
+  ptp_clock_get_stats(&ptp);
+
+  uint32_t frame_samples = audio.format.frame_size > 0
+                               ? (uint32_t)audio.format.frame_size
+                               : (audio.format.max_samples_per_frame > 0
+                                      ? audio.format.max_samples_per_frame
+                                      : 352U);
+  uint32_t buffer_ms = audio.format.sample_rate > 0
+                           ? (uint32_t)(((uint64_t)audio.buffer_frames *
+                                         frame_samples * 1000ULL) /
+                                        (uint32_t)audio.format.sample_rate)
+                           : 0;
+
+  cJSON *json = cJSON_CreateObject();
+  cJSON_AddBoolToObject(json, "success", true);
+  cJSON_AddStringToObject(json, "codec", audio.format.codec);
+  cJSON_AddNumberToObject(json, "sample_rate", audio.format.sample_rate);
+  cJSON_AddNumberToObject(json, "channels", audio.format.channels);
+  cJSON_AddNumberToObject(json, "bits_per_sample",
+                          audio.format.bits_per_sample);
+  cJSON_AddNumberToObject(json, "stream_type", audio.stream_type);
+  cJSON_AddBoolToObject(json, "playing", audio.playing);
+  cJSON_AddBoolToObject(json, "playout_started", audio.playout_started);
+  cJSON_AddBoolToObject(json, "anchor_valid", audio.anchor_valid);
+  cJSON_AddNumberToObject(json, "buffer_frames", audio.buffer_frames);
+  cJSON_AddNumberToObject(json, "buffer_capacity_frames",
+                          audio.buffer_capacity_frames);
+  cJSON_AddNumberToObject(json, "buffer_ms", buffer_ms);
+  cJSON_AddNumberToObject(json, "output_latency_us", audio.output_latency_us);
+  cJSON_AddNumberToObject(json, "advertised_latency_us",
+                          audio.advertised_latency_us);
+  cJSON_AddNumberToObject(json, "packets_received",
+                          audio.counters.packets_received);
+  cJSON_AddNumberToObject(json, "packets_decoded",
+                          audio.counters.packets_decoded);
+  cJSON_AddNumberToObject(json, "packets_dropped",
+                          audio.counters.packets_dropped);
+  cJSON_AddNumberToObject(json, "decrypt_errors",
+                          audio.counters.decrypt_errors);
+  cJSON_AddNumberToObject(json, "buffer_underruns",
+                          audio.counters.buffer_underruns);
+  cJSON_AddNumberToObject(json, "buffer_overruns",
+                          audio.counters.buffer_overruns);
+  cJSON_AddNumberToObject(json, "late_frames", audio.counters.late_frames);
+  cJSON_AddNumberToObject(json, "dma_descriptors", output.dma_descriptors);
+  cJSON_AddNumberToObject(json, "dma_frames", output.dma_frames);
+  cJSON_AddNumberToObject(json, "hardware_latency_us",
+                          output.hardware_latency_us);
+  cJSON_AddNumberToObject(json, "process_avg_us", output.process_avg_us);
+  cJSON_AddNumberToObject(json, "process_max_us", output.process_max_us);
+  cJSON_AddNumberToObject(json, "process_calls", output.process_calls);
+  cJSON_AddNumberToObject(json, "stack_high_water_words",
+                          output.stack_high_water_words);
+  cJSON_AddBoolToObject(json, "ptp_locked", ptp_clock_is_locked());
+  cJSON_AddNumberToObject(json, "ptp_offset_ns", ptp.filtered_offset_ns);
+  cJSON_AddNumberToObject(json, "ptp_lock_time_ms", ptp.lock_time_ms);
+
+  char *json_str = cJSON_PrintUnformatted(json);
+  if (!json_str) {
+    cJSON_Delete(json);
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(json);
+  return ESP_OK;
+}
+
 /* Protected nudge of the master output gain by +/-5 (clamped 0..100). Used by
    remote controls; the master gain always applies locally, including AirPlay
    2, where per-stream volume may not reach us. */
@@ -2467,7 +2560,7 @@ esp_err_t web_server_start(uint16_t port) {
 #endif
   config.lru_purge_enable = true; // Reclaim stale sockets when all are in use
   config.max_uri_handlers =
-      46; // captive portal + EQ + speedtest + gain + auth + matrix + argb +
+      47; // captive portal + EQ + speedtest + gain + auth + matrix + argb +
           // tone + nowplaying + volume + buttons + mqtt + protection
   config.max_resp_headers = 8;
   config.stack_size = 8192;
@@ -2557,6 +2650,11 @@ esp_err_t web_server_start(uint16_t port) {
                                 .method = HTTP_GET,
                                 .handler = nowplaying_handler};
   httpd_register_uri_handler(s_server, &nowplaying_uri);
+
+  httpd_uri_t audio_stats_uri = {.uri = "/api/audio/stats",
+                                 .method = HTTP_GET,
+                                 .handler = audio_stats_handler};
+  httpd_register_uri_handler(s_server, &audio_stats_uri);
 
   httpd_uri_t volume_uri = {
       .uri = "/api/volume", .method = HTTP_POST, .handler = volume_handler};

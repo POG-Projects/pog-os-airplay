@@ -329,3 +329,13 @@ uint32_t audio_output_get_hardware_latency_us(void) {
   const uint32_t audio_samples = DMA_BUF_COUNT * (SPDIF_BLOCK / SPDIF_BUF_DIV);
   return (uint32_t)((uint64_t)audio_samples * 1000000ULL / OUTPUT_RATE);
 }
+
+void audio_output_get_runtime_stats(audio_output_runtime_stats_t *stats) {
+  if (!stats)
+    return;
+  memset(stats, 0, sizeof(*stats));
+  stats->dma_descriptors = DMA_BUF_COUNT;
+  stats->dma_frames = DMA_BUF_FRAMES;
+  stats->sample_rate = OUTPUT_RATE;
+  stats->hardware_latency_us = audio_output_get_hardware_latency_us();
+}

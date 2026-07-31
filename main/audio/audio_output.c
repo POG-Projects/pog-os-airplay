@@ -11,6 +11,7 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "rtsp_server.h"
@@ -37,8 +38,8 @@
 //   I2S_DMA_DESC_NUM × I2S_DMA_FRAME_NUM
 // which at OUTPUT_RATE gives the hardware pipeline delay in µs.
 // Keep these in sync with the i2s_chan_config_t initialisation below.
-#define I2S_DMA_DESC_NUM  8
-#define I2S_DMA_FRAME_NUM 256
+#define I2S_DMA_DESC_NUM  6
+#define I2S_DMA_FRAME_NUM 128
 
 /* Max output frames after resampling one input frame */
 #define MAX_RESAMPLE_FRAMES \
@@ -57,6 +58,10 @@ static TaskHandle_t playback_task_handle = NULL;
 static volatile int source_rate = 44100;
 static volatile bool resample_reinit_needed = false;
 static volatile int s_channel_mode = 0;
+static portMUX_TYPE s_stats_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint64_t s_process_total_us;
+static uint32_t s_process_max_us;
+static uint32_t s_process_calls;
 
 void audio_output_set_channel_mode(int mode) {
   if (mode < 0 || mode > 3)
@@ -119,6 +124,7 @@ static void playback_task(void *arg) {
     }
     size_t samples = audio_receiver_read(pcm, FRAME_SAMPLES + 1);
     if (samples > 0) {
+      int64_t process_started_us = esp_timer_get_time();
       int16_t *play_buf = pcm;
       size_t play_samples = samples;
       if (audio_resample_is_active()) {
@@ -139,6 +145,15 @@ static void playback_task(void *arg) {
       led_audio_feed(play_buf, play_samples);
       led_matrix_feed(play_buf, play_samples);
       led_argb_feed(play_buf, play_samples);
+      uint32_t process_us =
+          (uint32_t)(esp_timer_get_time() - process_started_us);
+      portENTER_CRITICAL(&s_stats_lock);
+      s_process_total_us += process_us;
+      s_process_calls++;
+      if (process_us > s_process_max_us) {
+        s_process_max_us = process_us;
+      }
+      portEXIT_CRITICAL(&s_stats_lock);
       i2s_channel_write(tx_handle, play_buf, play_samples * 4, &written,
                         portMAX_DELAY);
       taskYIELD();
@@ -258,4 +273,26 @@ uint32_t audio_output_get_hardware_latency_us(void) {
   return (
       uint32_t)(((uint64_t)I2S_DMA_DESC_NUM * I2S_DMA_FRAME_NUM * 1000000ULL) /
                 OUTPUT_RATE);
+}
+
+void audio_output_get_runtime_stats(audio_output_runtime_stats_t *stats) {
+  if (!stats) {
+    return;
+  }
+  uint64_t total;
+  uint32_t calls;
+  portENTER_CRITICAL(&s_stats_lock);
+  total = s_process_total_us;
+  calls = s_process_calls;
+  stats->process_max_us = s_process_max_us;
+  portEXIT_CRITICAL(&s_stats_lock);
+  stats->dma_descriptors = I2S_DMA_DESC_NUM;
+  stats->dma_frames = I2S_DMA_FRAME_NUM;
+  stats->sample_rate = OUTPUT_RATE;
+  stats->hardware_latency_us = audio_output_get_hardware_latency_us();
+  stats->process_calls = calls;
+  stats->process_avg_us = calls ? (uint32_t)(total / calls) : 0;
+  stats->stack_high_water_words =
+      playback_task_handle ? uxTaskGetStackHighWaterMark(playback_task_handle)
+                           : 0;
 }

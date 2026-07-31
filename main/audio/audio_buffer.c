@@ -80,12 +80,17 @@ static bool audio_buffer_queue_chunk(audio_buffer_t *buffer,
     buffer->free_stack[buffer->free_top++] = victim;
     /* Take one token from the semaphore to keep it in sync */
     xSemaphoreTakeFromISR(buffer->data_ready, NULL);
+    if (stats) {
+      stats->buffer_overruns++;
+      stats->packets_dropped++;
+    }
   }
 
   if (buffer->free_top == 0) {
     portEXIT_CRITICAL(&buffer->lock);
     if (stats) {
-      stats->buffer_underruns++;
+      stats->buffer_overruns++;
+      stats->packets_dropped++;
     }
     return false;
   }

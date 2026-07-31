@@ -43,6 +43,7 @@ typedef struct {
   biquad_coeffs_t hpf2;
   bool hpf_on;
   biquad_coeffs_t band[EQ_NUM_BANDS];
+  float preamp;
 } eq_coeff_set_t;
 
 /* Per-channel, per-band filter state (transposed Direct Form II). */
@@ -169,6 +170,39 @@ static void design_highpass(biquad_coeffs_t *c, float fc, float q) {
   c->a2 = a2 / a0;
 }
 
+static float biquad_magnitude(const biquad_coeffs_t *c, float w) {
+  float cw = cosf(w), sw = sinf(w);
+  float c2w = cosf(2.0f * w), s2w = sinf(2.0f * w);
+  float nr = c->b0 + c->b1 * cw + c->b2 * c2w;
+  float ni = -c->b1 * sw - c->b2 * s2w;
+  float dr = 1.0f + c->a1 * cw + c->a2 * c2w;
+  float di = -c->a1 * sw - c->a2 * s2w;
+  float den = dr * dr + di * di;
+  return den > 1e-12f ? sqrtf((nr * nr + ni * ni) / den) : 1.0f;
+}
+
+/* Find the maximum response of the complete cascade and reserve 0.5 dB of
+   margin. This prevents boosted EQ bands from clipping before the final
+   limiter, while leaving flat/cut-only configurations at unity gain. */
+static float compute_preamp(const eq_coeff_set_t *set) {
+  float max_mag = 1.0f;
+  for (int i = 1; i <= 512; i++) {
+    float w = (float)M_PI * (float)i / 513.0f;
+    float mag = 1.0f;
+    if (set->hpf_on) {
+      mag *= biquad_magnitude(&set->hpf1, w);
+      mag *= biquad_magnitude(&set->hpf2, w);
+    }
+    for (int b = 0; b < EQ_NUM_BANDS; b++) {
+      mag *= biquad_magnitude(&set->band[b], w);
+    }
+    if (mag > max_mag) {
+      max_mag = mag;
+    }
+  }
+  return (max_mag > 1.0f) ? powf(10.0f, -0.5f / 20.0f) / max_mag : 1.0f;
+}
+
 void eq_dsp_set(bool enabled, int bass, int mid, int treble, int hpf) {
   bass = clamp_gain(bass);
   mid = clamp_gain(mid);
@@ -196,6 +230,7 @@ void eq_dsp_set(bool enabled, int bass, int mid, int treble, int hpf) {
   design_lowshelf(&set->band[0], EQ_BASS_FC, EQ_SHELF_Q, (float)bass);
   design_peaking(&set->band[1], EQ_MID_FC, EQ_MID_Q, (float)mid);
   design_highshelf(&set->band[2], EQ_TREBLE_FC, EQ_SHELF_Q, (float)treble);
+  set->preamp = compute_preamp(set);
 
   /* Publish the new coefficient set before flipping the active flag so the
      audio task always sees a complete, consistent set. */
@@ -243,7 +278,7 @@ void eq_dsp_process(int16_t *stereo, size_t frames) {
 
   for (size_t i = 0; i < frames; i++) {
     for (int ch = 0; ch < 2; ch++) {
-      float x = (float)stereo[2 * i + ch];
+      float x = (float)stereo[2 * i + ch] * set->preamp;
 
       /* Optional 4th-order high-pass first (two cascaded 2nd-order sections),
          then the 3 tone bands, with independent per-channel state. */
@@ -255,7 +290,7 @@ void eq_dsp_process(int16_t *stereo, size_t frames) {
       x = biquad_step(&set->band[1], &g_state[ch][1], x);
       x = biquad_step(&set->band[2], &g_state[ch][2], x);
 
-      /* EQ boost can exceed full-scale — saturate back to int16. */
+      /* Rounding/transient guard after the frequency-response headroom. */
       if (x > 32767.0f) {
         x = 32767.0f;
       } else if (x < -32768.0f) {

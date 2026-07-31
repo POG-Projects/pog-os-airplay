@@ -24,10 +24,9 @@ typedef struct {
   size_t pending_frame_len;
   size_t pending_frame_capacity;
   bool pending_valid;
-  // Early-frame guard: counts consecutive early frames to detect a stuck
-  // anchor. Reset whenever a new anchor is set or a late/on-time frame is
-  // played.
-  int consecutive_early_frames;
+  // Wall-clock time when the current pending early frame was first held.
+  // Used to reject a genuinely stuck anchor without counting DMA callbacks.
+  int64_t pending_since_us;
   // Late-frame guard: counts consecutive individually-late frames.  When this
   // Quick-start flag: set after a seek/flush/track-change so that
   // audio_timing_read starts playback with just 1 buffered frame instead of

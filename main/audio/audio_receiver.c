@@ -570,6 +570,27 @@ void audio_receiver_get_stats(audio_stats_t *stats) {
   memcpy(stats, &receiver.stats, sizeof(receiver.stats));
 }
 
+void audio_receiver_get_runtime_stats(audio_runtime_stats_t *stats) {
+  if (!stats) {
+    return;
+  }
+  memset(stats, 0, sizeof(*stats));
+  stats->counters = receiver.stats;
+  stats->buffer_frames =
+      (uint32_t)audio_buffer_get_frame_count(&receiver.buffer);
+  stats->buffer_capacity_frames = MAX_RING_BUFFER_FRAMES;
+  stats->output_latency_us = audio_timing_get_output_latency(&receiver.timing);
+  stats->advertised_latency_us =
+      audio_timing_get_advertised_latency(&receiver.timing);
+  stats->playing = receiver.timing.playing;
+  stats->playout_started = receiver.timing.playout_started;
+  stats->anchor_valid = receiver.timing.anchor_valid;
+  if (receiver.stream) {
+    stats->stream_type = (int)receiver.stream->type;
+    stats->format = receiver.stream->format;
+  }
+}
+
 size_t audio_receiver_read(int16_t *buffer, size_t samples) {
   if (!receiver.buffer.pool || !buffer || samples == 0) {
     return 0;

@@ -8,10 +8,8 @@
 // converted to per-sample one-pole smoothing coefficients at this rate.
 #define LIM_SAMPLE_RATE ((float)CONFIG_OUTPUT_SAMPLE_RATE_HZ)
 
-// Envelope follower time constants.
-//   - Fast attack so transients above the ceiling are caught within a few ms.
-//   - Slow release so the gain recovers smoothly without audible pumping.
-#define LIM_ATTACK_MS  3.0f
+// Gain reduction is instantaneous so no peak can cross the configured
+// ceiling. Recovery remains slow to avoid audible pumping.
 #define LIM_RELEASE_MS 150.0f
 
 // Full-scale reference for int16 audio.
@@ -27,7 +25,6 @@ static volatile float g_threshold = LIM_FULL_SCALE;
 // audio task touches this.
 static float g_gain = 1.0f;
 // Per-sample one-pole coefficients derived from the attack/release times.
-static float g_attack_coef = 0.0f;
 static float g_release_coef = 0.0f;
 
 // Convert a time constant (ms) to a one-pole smoothing coefficient.
@@ -57,7 +54,6 @@ void audio_limiter_set(bool enabled, int ceiling_db) {
 
   // Convert the dBFS ceiling to a linear peak amplitude (int16 units).
   g_threshold = LIM_FULL_SCALE * powf(10.0f, (float)ceiling_db / 20.0f);
-  g_attack_coef = coef_from_ms(LIM_ATTACK_MS);
   g_release_coef = coef_from_ms(LIM_RELEASE_MS);
   // Publish enable last so the audio task never runs with stale coefficients.
   g_enabled = enabled;
@@ -83,7 +79,6 @@ void audio_limiter_process(int16_t *buf, size_t nsamples) {
   }
 
   const float threshold = g_threshold;
-  const float attack = g_attack_coef;
   const float release = g_release_coef;
   float gain = g_gain;
 
@@ -107,10 +102,13 @@ void audio_limiter_process(int16_t *buf, size_t nsamples) {
       target = threshold / peak;
     }
 
-    // Fast attack when we need to pull the gain down, slow release when we
-    // can let it back up. One-pole smoothing toward the target.
-    float coef = (target < gain) ? attack : release;
-    gain = target + coef * (gain - target);
+    // Pull down immediately so the current peak cannot escape. Smooth only
+    // the release back toward unity; this adds no look-ahead latency.
+    if (target < gain) {
+      gain = target;
+    } else {
+      gain = target + release * (gain - target);
+    }
 
     buf[i] = clamp_i16(l * gain);
     buf[i + 1] = clamp_i16(r * gain);
