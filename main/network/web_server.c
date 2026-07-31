@@ -187,6 +187,43 @@ static web_server_nowplaying_t s_nowplaying;
 static void (*s_nowplaying_observer)(void);
 static SemaphoreHandle_t s_nowplaying_mutex;
 
+/* Quand `s_nowplaying.position_secs` a été posée par un vrai `progress:`.
+   0 signifie « ne compte pas » : à l'arrêt, en pause, ou tant qu'aucune
+   progression n'est arrivée. */
+static int64_t s_position_anchor_us;
+
+/* Où on en est MAINTENANT, et non où on en était au dernier `progress:`.
+ *
+ * L'émetteur AirPlay n'envoie la progression que dans un SET_PARAMETER, et il
+ * le fait rarement — mesuré à environ deux minutes d'intervalle sur un iPhone.
+ * Entre deux, la position restait figée puis rattrapait d'un bond : sur un
+ * morceau de quatre minutes, l'affichage passait la moitié du temps à mentir
+ * d'une minute ou plus. Rien n'oblige à attendre l'émetteur pour cette
+ * partie-là — le temps qui passe, on le connaît.
+ *
+ * Compté et non stocké : la valeur rangée reste celle que l'émetteur a
+ * affirmée, donc chaque nouveau `progress:` réancre au lieu de corriger une
+ * dérive accumulée. Un saut dans le morceau ou un changement de piste redevient
+ * juste au message suivant plutôt que de composer avec ce qu'on avait deviné.
+ *
+ * À appeler avec `s_nowplaying_mutex` tenu. */
+static uint32_t nowplaying_position_now(void) {
+  if (!s_nowplaying.playing || s_position_anchor_us == 0 ||
+      s_nowplaying.duration_secs == 0) {
+    return s_nowplaying.position_secs;
+  }
+  const int64_t elapsed_us = esp_timer_get_time() - s_position_anchor_us;
+  if (elapsed_us <= 0) {
+    return s_nowplaying.position_secs;
+  }
+  /* Plafonné à la durée : sans ça, une piste finie dont l'émetteur s'est tu
+     continuerait de compter au-delà de sa propre fin. */
+  const uint64_t pos =
+      (uint64_t)s_nowplaying.position_secs + (uint64_t)(elapsed_us / 1000000);
+  return pos > s_nowplaying.duration_secs ? s_nowplaying.duration_secs
+                                          : (uint32_t)pos;
+}
+
 void web_server_get_nowplaying(web_server_nowplaying_t *out) {
   if (out == NULL) {
     return;
@@ -195,6 +232,7 @@ void web_server_get_nowplaying(web_server_nowplaying_t *out) {
   if (s_nowplaying_mutex != NULL &&
       xSemaphoreTake(s_nowplaying_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
     *out = s_nowplaying;
+    out->position_secs = nowplaying_position_now();
     xSemaphoreGive(s_nowplaying_mutex);
   }
 }
@@ -215,6 +253,7 @@ static void nowplaying_clear_metadata(void) {
   s_nowplaying.album[0] = '\0';
   s_nowplaying.position_secs = 0;
   s_nowplaying.duration_secs = 0;
+  s_position_anchor_us = 0;
 }
 
 static void on_rtsp_event_nowplaying(rtsp_event_t event,
@@ -236,9 +275,21 @@ static void on_rtsp_event_nowplaying(rtsp_event_t event,
   switch (event) {
   case RTSP_EVENT_CLIENT_CONNECTED:
   case RTSP_EVENT_PLAYING:
+    /* Une REPRISE repart de maintenant : l'ancre a été effacée à la pause, et
+       la reposer ici est ce qui évite de compter la pause comme du morceau
+       joué. Déjà en lecture, on n'y touche pas — reposer l'ancre sans reporter
+       la position perdrait tout le temps déjà couru depuis elle. */
+    if (!s_nowplaying.playing && s_nowplaying.duration_secs > 0) {
+      s_position_anchor_us = esp_timer_get_time();
+    }
     s_nowplaying.playing = true;
     break;
   case RTSP_EVENT_PAUSED:
+    /* Figer là où on en est. L'ordre compte : la position se lit tant qu'on
+       est encore en lecture, sinon elle revient à l'ancre sans le temps
+       écoulé depuis. */
+    s_nowplaying.position_secs = nowplaying_position_now();
+    s_position_anchor_us = 0;
     s_nowplaying.playing = false;
     break;
   case RTSP_EVENT_DISCONNECTED:
@@ -263,6 +314,9 @@ static void on_rtsp_event_nowplaying(rtsp_event_t event,
       if (m->duration_secs > 0) {
         s_nowplaying.position_secs = m->position_secs;
         s_nowplaying.duration_secs = m->duration_secs;
+        /* Le seul instant où l'émetteur dit vraiment où on en est. Tout ce qui
+           s'affiche jusqu'au prochain se compte à partir d'ici. */
+        s_position_anchor_us = esp_timer_get_time();
       }
       /* Metadata flowing implies an active stream. */
       s_nowplaying.playing = true;
