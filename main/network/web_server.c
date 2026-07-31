@@ -1826,6 +1826,9 @@ static esp_err_t ota_latest_handler(httpd_req_t *req) {
       .url = url,
       .crt_bundle_attach = esp_crt_bundle_attach,
       .timeout_ms = 30000,
+      // GitHub redirects release assets to a signed object URL whose path and
+      // query exceed esp_http_client's 512-byte default request buffer.
+      .buffer_size_tx = 2048,
       .keep_alive_enable = true,
   };
   esp_https_ota_config_t ota_config = {
