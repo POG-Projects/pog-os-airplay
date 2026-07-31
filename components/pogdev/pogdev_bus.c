@@ -38,7 +38,7 @@ static char *build_hello(void) {
   cJSON_AddNumberToObject(root, "proto", 1);
   cJSON_AddStringToObject(root, "hw_id", pogdev_hw_id());
   cJSON_AddStringToObject(root, "model", POGDEV_MODEL);
-  cJSON_AddStringToObject(root, "fw_version", POGDEV_FW_VERSION);
+  cJSON_AddStringToObject(root, "fw_version", pogdev_fw_version());
 
   cJSON *entities = cJSON_AddArrayToObject(root, "entities");
   if (s_describe != NULL) {

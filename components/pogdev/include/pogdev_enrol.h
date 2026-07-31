@@ -12,11 +12,6 @@
 extern "C" {
 #endif
 
-/* Version de firmware annoncée. Volontairement distincte de celle de
- * l'application AirPlay : elle dit ce que l'appareil sait faire du protocole
- * pogdev, pas ce qu'il sait faire de l'audio. */
-#define POGDEV_FW_VERSION "0.1.0"
-
 /* Modèle annoncé à l'adoption et dans le descripteur. Une seule définition,
  * pour que les deux ne puissent pas diverger. */
 #define POGDEV_MODEL "POG AirPlay (XIAO S3)"
@@ -44,6 +39,20 @@ bool pogdev_enrol_get(pogdev_creds_t *out);
 
 /* Identifiant matériel stable, celui que l'humain compare à l'écran. */
 const char *pogdev_hw_id(void);
+
+/* Version de firmware annoncée à l'enrôlement et dans le `hello` ; c'est elle
+ * que pog Home enregistre dans `devices.sw_version`.
+ *
+ * Elle est lue dans le descripteur d'application ESP-IDF, donc dans PROJECT_VER,
+ * donc dans version.txt : la même source que `firmware_version` de
+ * /api/system/info et que la comparaison OTA. Le choix précédent — un littéral
+ * figé dans cet en-tête — laissait tout le parc annoncer 0.1.0 : deux firmwares
+ * différents devenaient indiscernables, et un `hello` légitime a été pris pour
+ * un rejeu.
+ *
+ * Ce n'est pas la version du protocole pogdev, qui voyage à part : `proto` sur
+ * le bus, `proto_version` à l'annonce. */
+const char *pogdev_fw_version(void);
 
 #ifdef __cplusplus
 }

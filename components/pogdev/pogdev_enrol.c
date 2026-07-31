@@ -10,6 +10,7 @@
 #include "pogdev_discovery.h"
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -182,8 +183,8 @@ static int http_call(const char *url, const char *method, const char *body,
 static void announce(const pogdev_server_t *srv) {
   cJSON *body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "hw_id", s_hw_id);
-  cJSON_AddStringToObject(body, "model", "POG AirPlay (XIAO S3)");
-  cJSON_AddStringToObject(body, "fw_version", POGDEV_FW_VERSION);
+  cJSON_AddStringToObject(body, "model", POGDEV_MODEL);
+  cJSON_AddStringToObject(body, "fw_version", pogdev_fw_version());
   cJSON_AddStringToObject(body, "proto_version", "1");
   cJSON_AddStringToObject(body, "name",
                           s_device_name[0] ? s_device_name : "Enceinte POG");
@@ -367,4 +368,17 @@ const char *pogdev_hw_id(void) {
     build_hw_id();
   }
   return s_hw_id;
+}
+
+const char *pogdev_fw_version(void) {
+  /* Le descripteur vit dans la flash mappée de l'image en cours : la chaîne
+   * reste valable pour toute la durée d'exécution, donc pas de copie. */
+  const esp_app_desc_t *app = esp_app_get_description();
+  if (app == NULL || app->version[0] == '\0') {
+    /* Ne peut arriver qu'avec une image sans descripteur. On renvoie un semver
+     * valide plutôt que la chaîne vide : pog Home range ce champ dans
+     * `sw_version` et doit pouvoir le comparer sans cas particulier. */
+    return "0.0.0";
+  }
+  return app->version;
 }
