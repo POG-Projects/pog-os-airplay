@@ -14,6 +14,7 @@
   --txt3:rgba(235,235,245,.3);
   --blue:#0a84ff;
   --green:#30d158;
+  --orange:#ff9f0a;
   --red:#ff453a;
   --r:22px;
 }
@@ -96,7 +97,49 @@ input::placeholder{color:var(--txt3)}
 .btn.ghost{background:transparent;color:var(--blue);padding:12px}
 .btn.danger{background:transparent;color:var(--red)}
 .btn:disabled{opacity:.4;pointer-events:none}
+.btn[hidden]{display:none}
+.btn:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid #fff;outline-offset:3px}
 .btn+.btn,.btn+ .fg,.fg+.btn{margin-top:12px}
+
+/* pog Home — the pairing beacon is the one expressive system-state element */
+.pog-state{display:flex;align-items:center;gap:15px;padding-bottom:17px;margin-bottom:15px;border-bottom:.5px solid var(--hair)}
+.pog-beacon{position:relative;width:46px;height:46px;border-radius:50%;flex:none;
+  background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px var(--hair)}
+.pog-beacon::before{content:'';position:absolute;inset:16px;border-radius:50%;background:var(--txt3);transition:background .25s,box-shadow .25s}
+.pog-beacon::after{content:'';position:absolute;inset:7px;border-radius:50%;border:1px solid transparent}
+.pog-beacon.connected::before{background:var(--green);box-shadow:0 0 15px rgba(48,209,88,.75)}
+.pog-beacon.connected::after{border-color:rgba(48,209,88,.3)}
+.pog-beacon.connecting::before{background:var(--blue);box-shadow:0 0 15px rgba(10,132,255,.75)}
+.pog-beacon.connecting::after{border-color:rgba(10,132,255,.35);animation:pog-ring 1.8s ease-out infinite}
+.pog-beacon.pending::before{background:var(--orange);box-shadow:0 0 15px rgba(255,159,10,.6)}
+.pog-beacon.pending::after{border-color:rgba(255,159,10,.3)}
+.pog-beacon.failed::before{background:var(--red);box-shadow:0 0 15px rgba(255,69,58,.65)}
+.pog-beacon.failed::after{border-color:rgba(255,69,58,.3)}
+@keyframes pog-ring{0%{transform:scale(.65);opacity:1}75%,100%{transform:scale(1.35);opacity:0}}
+.pog-copy{min-width:0}.pog-title{font-size:17px;font-weight:650;letter-spacing:-.015em}
+.pog-desc{font-size:13px;color:var(--txt2);line-height:1.4;margin-top:3px}
+.pog-id{display:flex;align-items:center;gap:12px;padding:0 0 15px;margin-bottom:15px;border-bottom:.5px solid var(--hair)}
+.pog-id .lbl{font-size:13px;color:var(--txt3)}
+.pog-id code{margin-left:auto;max-width:68%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--txt2);font:500 12px ui-monospace,SFMono-Regular,Menlo,monospace}
+
+dialog.pog-dialog{position:fixed;inset:auto;top:50%;left:50%;width:min(410px,calc(100% - 32px));max-height:calc(100dvh - 32px);margin:0;
+  transform:translate(-50%,-50%);
+  border:0;border-radius:24px;padding:0;overflow:auto;
+  color:var(--txt);background:#1b1b1f;box-shadow:0 24px 80px rgba(0,0,0,.68),inset 0 0 0 1px var(--hair)}
+dialog.pog-dialog::backdrop{background:rgba(0,0,0,.68);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
+.pog-dialog[open]{animation:dialog-in .24s cubic-bezier(.22,1,.36,1) both}
+@keyframes dialog-in{from{opacity:0;transform:translate(-50%,calc(-50% + 18px)) scale(.98)}to{opacity:1;transform:translate(-50%,-50%)}}
+.pog-dialog-body{padding:24px}.pog-dialog-mark{width:44px;height:44px;border-radius:14px;margin-bottom:17px;
+  display:grid;place-items:center;background:rgba(255,69,58,.13);color:var(--red);font-size:23px;font-weight:700}
+.pog-dialog h2{font-family:ui-rounded,'SF Pro Rounded',-apple-system,system-ui,sans-serif;font-size:23px;line-height:1.2;margin-bottom:9px}
+.pog-dialog p{font-size:15px;color:var(--txt2);line-height:1.5}
+.pog-kept{margin-top:16px;padding:13px 14px;border-radius:13px;background:rgba(255,255,255,.055);font-size:13px;color:var(--txt2)}
+.pog-kept strong{display:block;color:var(--txt);font-size:13px;margin-bottom:3px}
+.pog-dialog-actions{display:grid;grid-template-columns:1fr 1.35fr;gap:10px;margin-top:20px}
+.pog-dialog-actions .btn{font-size:15px;padding:12px 10px}.pog-dialog-actions .btn.danger-solid{background:var(--red);color:#fff}
+@media (max-width:520px){dialog.pog-dialog{width:calc(100% - 20px);border-radius:24px}.pog-dialog-actions{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.grp,.pog-dialog[open],.pog-beacon.connecting::after{animation:none!important}.btn{transition:none}}
 
 /* volume slider — iOS style */
 .vol-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px}
@@ -732,6 +775,19 @@ select option{background:#18181b;color:var(--txt)}
   <div class='row'><span class='lbl'>Horloge PTP</span><span class='val' id='audio-ptp'>–</span></div>
 </div></div>
 
+<div class='grp'><h2>pog Home</h2><div class='card'><div class='pad'>
+  <div class='pog-state'>
+    <div class='pog-beacon' id='pog-beacon' aria-hidden='true'></div>
+    <div class='pog-copy'>
+      <div class='pog-title' id='pog-title' aria-live='polite'>Vérification…</div>
+      <div class='pog-desc' id='pog-desc'>Lecture de l’état d’association.</div>
+    </div>
+  </div>
+  <div class='pog-id'><span class='lbl'>Identifiant matériel</span><code id='pog-hwid'>–</code></div>
+  <button class='btn danger' id='pog-forget-btn' type='button' onclick='openPogdevForget()' hidden>Dissocier cette enceinte</button>
+  <div id='pog-msg' aria-live='polite'></div>
+</div></div></div>
+
 <div class='grp'><h2>Mise à jour</h2><div class='card'><div class='pad'>
   <button class='btn sec' id='ota-check-btn' onclick='checkOTA(true)'>Rechercher une mise à jour</button>
   <button class='btn' id='ota-auto-btn' onclick='installLatestOTA()' disabled>Installer la mise à jour</button>
@@ -784,6 +840,19 @@ select option{background:#18181b;color:var(--txt)}
 </nav>
 
 </div><!-- /view-panel -->
+
+<dialog class='pog-dialog' id='pog-forget-dialog' aria-labelledby='pog-dialog-title' aria-describedby='pog-dialog-desc'>
+  <div class='pog-dialog-body'>
+    <div class='pog-dialog-mark' aria-hidden='true'>!</div>
+    <h2 id='pog-dialog-title'>Dissocier de pog Home ?</h2>
+    <p id='pog-dialog-desc'>Les identifiants pog Home de cette enceinte seront supprimés. Elle redémarrera puis réapparaîtra automatiquement dans la liste des appareils à associer.</p>
+    <div class='pog-kept'><strong>Ces réglages restent intacts</strong>Wi‑Fi, nom de l’enceinte, AirPlay, égaliseur et volume.</div>
+    <div class='pog-dialog-actions'>
+      <button class='btn sec' type='button' onclick='closePogdevForget()'>Annuler</button>
+      <button class='btn danger-solid' id='pog-forget-confirm' type='button' onclick='forgetPogdev()'>Dissocier et redémarrer</button>
+    </div>
+  </div>
+</dialog>
 
 <script>
 function msg(id,txt,type){var e=document.getElementById(id);if(e){e.innerHTML='';var m=document.createElement('div');m.className='msg '+type;m.textContent=txt;e.appendChild(m);setTimeout(function(){e.innerHTML='';},4000);}}
@@ -856,8 +925,8 @@ function showPanel(){
   showView('view-panel');
   setTab(getTab());                       /* restore last-viewed tab */
   var ll=document.getElementById('logs-link');if(ll)ll.href=wsUrl();
-  loadGain();loadTone();loadArgb();loadButtons();loadProtection();loadInfo();loadNowPlaying();loadMqtt();loadAudioStats();
-  if(!showPanel._iv)showPanel._iv=setInterval(function(){loadInfo();loadMqtt();},30000);
+  loadGain();loadTone();loadArgb();loadButtons();loadProtection();loadInfo();loadNowPlaying();loadMqtt();loadAudioStats();loadPogdevStatus();
+  if(!showPanel._iv)showPanel._iv=setInterval(function(){loadInfo();loadMqtt();loadPogdevStatus();},30000);
   /* poll now-playing more often while the panel is visible */
   if(!showPanel._npiv)showPanel._npiv=setInterval(function(){
     if(!document.getElementById('view-panel').hidden&&!document.hidden){loadNowPlaying();loadAudioStats();}
@@ -1291,6 +1360,55 @@ async function installLatestOTA(){
 async function restart(){
   if(!confirm('Redémarrer l\'appareil ?'))return;
   try{await authFetch('/api/system/restart',{method:'POST'});watchReboot('ota-msg');}catch(e){}}
+var g_pogdevStatus=null;
+function renderPogdevStatus(d){
+  var beacon=document.getElementById('pog-beacon'),title=document.getElementById('pog-title');
+  var desc=document.getElementById('pog-desc'),hwid=document.getElementById('pog-hwid');
+  var forget=document.getElementById('pog-forget-btn');
+  g_pogdevStatus=d;hwid.textContent=d.hardware_id||'–';forget.hidden=!d.enrolled;
+  if(!d.enrolled){
+    beacon.className='pog-beacon connecting';title.textContent='Prête à associer';
+    desc.textContent='Ouvre pog Home et repère cette enceinte avec son identifiant matériel.';
+    return;
+  }
+  forget.textContent=d.connection==='auth_failed'?'Réinitialiser l’association':'Dissocier cette enceinte';
+  if(d.connection==='connected'){
+    beacon.className='pog-beacon connected';title.textContent='Connectée à pog Home';
+    desc.textContent='L’association et le canal de contrôle sont opérationnels.';
+  }else if(d.connection==='auth_failed'){
+    beacon.className='pog-beacon failed';title.textContent='Association expirée';
+    desc.textContent='pog Home refuse ces anciens identifiants. Réinitialise l’association pour réannoncer l’enceinte.';
+  }else if(d.connection==='connecting'){
+    beacon.className='pog-beacon connecting';title.textContent='Connexion à pog Home…';
+    desc.textContent='L’association est enregistrée ; le canal de contrôle se reconnecte.';
+  }else{
+    beacon.className='pog-beacon pending';title.textContent='Association enregistrée';
+    desc.textContent='Un redémarrage est nécessaire pour démarrer le canal de contrôle.';
+  }
+}
+async function loadPogdevStatus(){
+  try{var r=await authFetch('/api/pogdev/status',{cache:'no-store'});if(!r.ok)return;var d=await r.json();if(d.success)renderPogdevStatus(d);}
+  catch(e){var t=document.getElementById('pog-title'),x=document.getElementById('pog-desc');if(t)t.textContent='État indisponible';if(x)x.textContent='La connexion locale aux informations pog Home a échoué.';}
+}
+function openPogdevForget(){
+  if(!g_pogdevStatus||!g_pogdevStatus.enrolled)return;
+  var expired=g_pogdevStatus.connection==='auth_failed';
+  document.getElementById('pog-dialog-title').textContent=expired?'Réinitialiser l’association ?':'Dissocier de pog Home ?';
+  document.getElementById('pog-dialog-desc').textContent=expired
+    ?'Les identifiants refusés seront supprimés. L’enceinte redémarrera puis réapparaîtra automatiquement dans la liste des appareils à associer.'
+    :'Les identifiants pog Home de cette enceinte seront supprimés. Elle redémarrera puis réapparaîtra automatiquement dans la liste des appareils à associer.';
+  var b=document.getElementById('pog-forget-confirm');b.disabled=false;b.textContent=expired?'Réinitialiser et redémarrer':'Dissocier et redémarrer';
+  document.getElementById('pog-forget-dialog').showModal();
+}
+function closePogdevForget(){document.getElementById('pog-forget-dialog').close();}
+async function forgetPogdev(){
+  var b=document.getElementById('pog-forget-confirm');b.disabled=true;b.textContent='Suppression…';
+  try{
+    var r=await authFetch('/api/pogdev/forget',{method:'POST'});var d=await r.json();
+    if(!r.ok||!d.success)throw new Error((d&&d.error)||'erase_failed');
+    closePogdevForget();msg('pog-msg','Association supprimée · redémarrage…','info');watchReboot('pog-msg');
+  }catch(e){b.disabled=false;b.textContent='Réessayer';msg('pog-msg','Impossible de supprimer l’association','err');}
+}
 async function loadInfo(){
   try{var r=await fetch('/api/system/info');var d=await r.json();
     if(d.success){var i=d.info;
@@ -1391,6 +1509,8 @@ window.onload=function(){
   document.getElementById('pr-acth').onchange=saveProtection;
   document.getElementById('pr-standby').onchange=saveProtection;
   document.getElementById('pr-chan').onchange=saveProtection;
+  var pogDialog=document.getElementById('pog-forget-dialog');
+  pogDialog.addEventListener('click',function(e){if(e.target===pogDialog)closePogdevForget();});
   /* Enter to submit on the auth screens */
   document.getElementById('login-pw').addEventListener('keydown',function(e){if(e.key==='Enter')doLogin();});
   document.getElementById('ob-pw2').addEventListener('keydown',function(e){if(e.key==='Enter')obNext();});

@@ -45,9 +45,31 @@ static const char *TAG = "pogdev";
 static pogdev_creds_t s_creds;
 static bool s_have_creds;
 static SemaphoreHandle_t s_lock;
+static portMUX_TYPE s_lock_init_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_forgetting;
 static char s_hw_id[48];
 static char s_claim_secret[65];
 static char s_device_name[65];
+
+static esp_err_t ensure_state_lock(void) {
+  if (s_lock != NULL) {
+    return ESP_OK;
+  }
+  SemaphoreHandle_t created = xSemaphoreCreateMutex();
+  if (created == NULL) {
+    return ESP_ERR_NO_MEM;
+  }
+  portENTER_CRITICAL(&s_lock_init_mux);
+  if (s_lock == NULL) {
+    s_lock = created;
+    created = NULL;
+  }
+  portEXIT_CRITICAL(&s_lock_init_mux);
+  if (created != NULL) {
+    vSemaphoreDelete(created);
+  }
+  return ESP_OK;
+}
 
 /* ---- identité ---- */
 
@@ -71,8 +93,14 @@ static esp_err_t nvs_get_str_into(nvs_handle_t h, const char *key, char *out,
 }
 
 static bool load_state(void) {
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_forgetting) {
+    xSemaphoreGive(s_lock);
+    return false;
+  }
   nvs_handle_t h;
   if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+    xSemaphoreGive(s_lock);
     return false;
   }
   nvs_get_str_into(h, NVS_KEY_CLAIM, s_claim_secret, sizeof(s_claim_secret));
@@ -88,12 +116,11 @@ static bool load_state(void) {
     uint16_t port = 1883;
     nvs_get_u16(h, NVS_KEY_MQTT_PORT, &port);
     c.mqtt_port = port;
-    xSemaphoreTake(s_lock, portMAX_DELAY);
     s_creds = c;
     s_have_creds = true;
-    xSemaphoreGive(s_lock);
   }
   nvs_close(h);
+  xSemaphoreGive(s_lock);
   return ok;
 }
 
@@ -102,7 +129,13 @@ static bool load_state(void) {
  * dès la première annonce reçue. Le perdre entre-temps veut dire recommencer.
  */
 static esp_err_t ensure_claim_secret(void) {
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_forgetting) {
+    xSemaphoreGive(s_lock);
+    return ESP_ERR_INVALID_STATE;
+  }
   if (s_claim_secret[0] != '\0') {
+    xSemaphoreGive(s_lock);
     return ESP_OK;
   }
   uint8_t raw[32];
@@ -114,6 +147,7 @@ static esp_err_t ensure_claim_secret(void) {
   nvs_handle_t h;
   esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
   if (err != ESP_OK) {
+    xSemaphoreGive(s_lock);
     return err;
   }
   err = nvs_set_str(h, NVS_KEY_CLAIM, s_claim_secret);
@@ -121,13 +155,20 @@ static esp_err_t ensure_claim_secret(void) {
     err = nvs_commit(h);
   }
   nvs_close(h);
+  xSemaphoreGive(s_lock);
   return err;
 }
 
 static esp_err_t store_creds(const pogdev_creds_t *c) {
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_forgetting) {
+    xSemaphoreGive(s_lock);
+    return ESP_ERR_INVALID_STATE;
+  }
   nvs_handle_t h;
   esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
   if (err != ESP_OK) {
+    xSemaphoreGive(s_lock);
     return err;
   }
   if ((err = nvs_set_str(h, NVS_KEY_DEVICE_ID, c->device_id)) == ESP_OK &&
@@ -137,6 +178,11 @@ static esp_err_t store_creds(const pogdev_creds_t *c) {
     err = nvs_commit(h);
   }
   nvs_close(h);
+  if (err == ESP_OK) {
+    s_creds = *c;
+    s_have_creds = true;
+  }
+  xSemaphoreGive(s_lock);
   return err;
 }
 
@@ -225,13 +271,17 @@ static bool collect(const pogdev_server_t *srv) {
     ESP_LOGW(TAG,
              "le serveur ne nous reconnaît plus (HTTP %d) — nouvelle annonce",
              status);
-    s_claim_secret[0] = '\0';
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (!s_forgetting) {
+      s_claim_secret[0] = '\0';
+    }
     nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+    if (!s_forgetting && nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
       nvs_erase_key(h, NVS_KEY_CLAIM);
       nvs_commit(h);
       nvs_close(h);
     }
+    xSemaphoreGive(s_lock);
     return false;
   }
   if (status != 200) {
@@ -281,11 +331,6 @@ static bool collect(const pogdev_server_t *srv) {
              esp_err_to_name(err));
     return false;
   }
-
-  xSemaphoreTake(s_lock, portMAX_DELAY);
-  s_creds = c;
-  s_have_creds = true;
-  xSemaphoreGive(s_lock);
 
   ESP_LOGI(TAG, "adopté par pog Home — device_id=%s, mqtt %s:%u", c.device_id,
            c.mqtt_host, c.mqtt_port);
@@ -340,11 +385,9 @@ esp_err_t pogdev_enrol_start(const char *device_name) {
   if (device_name != NULL) {
     strlcpy(s_device_name, device_name, sizeof(s_device_name));
   }
-  if (s_lock == NULL) {
-    s_lock = xSemaphoreCreateMutex();
-    if (s_lock == NULL) {
-      return ESP_ERR_NO_MEM;
-    }
+  esp_err_t lock_err = ensure_state_lock();
+  if (lock_err != ESP_OK) {
+    return lock_err;
   }
   BaseType_t ok = xTaskCreate(enrol_task, "pogdev_enrol", 6144, NULL, 3, NULL);
   return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
@@ -355,7 +398,7 @@ bool pogdev_enrol_get(pogdev_creds_t *out) {
     return false;
   }
   xSemaphoreTake(s_lock, portMAX_DELAY);
-  bool have = s_have_creds;
+  bool have = s_have_creds && !s_forgetting;
   if (have) {
     *out = s_creds;
   }
@@ -371,35 +414,41 @@ const char *pogdev_hw_id(void) {
 }
 
 esp_err_t pogdev_forget(void) {
+  esp_err_t lock_err = ensure_state_lock();
+  if (lock_err != ESP_OK) {
+    return lock_err;
+  }
+
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_forgetting = true;
   nvs_handle_t h;
   esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
   if (err == ESP_ERR_NVS_NOT_FOUND) {
     /* Never enrolled. Nothing to erase, and saying so is not a failure — a
      * caller that treated it as one would report an error for the state it was
      * asking for. */
-    return ESP_OK;
+    err = ESP_OK;
+  } else if (err == ESP_OK) {
+    err = nvs_erase_all(h);
+    if (err == ESP_OK) {
+      err = nvs_commit(h);
+    }
+    nvs_close(h);
   }
-  if (err != ESP_OK) {
-    return err;
-  }
-  err = nvs_erase_all(h);
-  if (err == ESP_OK) {
-    err = nvs_commit(h);
-  }
-  nvs_close(h);
 
   if (err == ESP_OK) {
     /* Cleared in memory too. The reboot the caller owes us makes this
      * redundant, but leaving live credentials in RAM after being told to forget
      * them is the kind of thing that survives a refactor of the caller. */
-    xSemaphoreTake(s_lock, portMAX_DELAY);
     memset(&s_creds, 0, sizeof(s_creds));
     s_have_creds = false;
-    xSemaphoreGive(s_lock);
     memset(s_claim_secret, 0, sizeof(s_claim_secret));
     ESP_LOGW(TAG,
              "enrôlement effacé — redémarrage nécessaire pour se réannoncer");
+  } else {
+    s_forgetting = false;
   }
+  xSemaphoreGive(s_lock);
   return err;
 }
 

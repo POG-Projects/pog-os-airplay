@@ -7,6 +7,7 @@
 #include "esp_random.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
+#include "pogdev_bus.h"
 #include "pogdev_enrol.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -2184,6 +2185,56 @@ static esp_err_t pogdev_forget_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+static const char *pogdev_connection_name(pogdev_bus_status_t status) {
+  switch (status) {
+  case POGDEV_BUS_CONNECTING:
+    return "connecting";
+  case POGDEV_BUS_CONNECTED:
+    return "connected";
+  case POGDEV_BUS_AUTH_FAILED:
+    return "auth_failed";
+  default:
+    return "not_started";
+  }
+}
+
+static esp_err_t pogdev_status_handler(httpd_req_t *req) {
+  if (check_auth(req) != ESP_OK) {
+    return ESP_FAIL;
+  }
+
+  pogdev_creds_t creds = {0};
+  bool enrolled = pogdev_enrol_get(&creds);
+  cJSON *json = cJSON_CreateObject();
+  if (!json) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    return ESP_FAIL;
+  }
+  cJSON_AddBoolToObject(json, "success", true);
+  cJSON_AddBoolToObject(json, "enrolled", enrolled);
+  cJSON_AddStringToObject(json, "connection",
+                          enrolled
+                              ? pogdev_connection_name(pogdev_bus_get_status())
+                              : "unenrolled");
+  cJSON_AddStringToObject(json, "hardware_id", pogdev_hw_id());
+  if (enrolled) {
+    cJSON_AddStringToObject(json, "device_id", creds.device_id);
+  }
+
+  char *json_str = cJSON_PrintUnformatted(json);
+  if (!json_str) {
+    cJSON_Delete(json);
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(json);
+  return ESP_OK;
+}
+
 static esp_err_t system_restart_handler(httpd_req_t *req) {
   if (check_auth(req) != ESP_OK)
     return ESP_FAIL;
@@ -2563,8 +2614,8 @@ esp_err_t web_server_start(uint16_t port) {
 #endif
   config.lru_purge_enable = true; // Reclaim stale sockets when all are in use
   config.max_uri_handlers =
-      47; // captive portal + EQ + speedtest + gain + auth + matrix + argb +
-          // tone + nowplaying + volume + buttons + mqtt + protection
+      48; // captive portal + EQ + speedtest + gain + auth + matrix + argb +
+          // tone + nowplaying + volume + buttons + mqtt + protection + pogdev
   config.max_resp_headers = 8;
   config.stack_size = 8192;
   config.close_fn = web_session_close;
@@ -2746,6 +2797,11 @@ esp_err_t web_server_start(uint16_t port) {
                                    .method = HTTP_POST,
                                    .handler = pogdev_forget_handler};
   httpd_register_uri_handler(s_server, &pogdev_forget_uri);
+
+  httpd_uri_t pogdev_status_uri = {.uri = "/api/pogdev/status",
+                                   .method = HTTP_GET,
+                                   .handler = pogdev_status_handler};
+  httpd_register_uri_handler(s_server, &pogdev_status_uri);
 
   // File management API
   httpd_uri_t fs_upload_uri = {.uri = "/api/fs/upload",

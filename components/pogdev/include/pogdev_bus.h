@@ -27,6 +27,13 @@ typedef void (*pogdev_state_fn)(cJSON *state);
 typedef void (*pogdev_cmd_handler)(const char *key, const char *name,
                                    const cJSON *params);
 
+typedef enum {
+  POGDEV_BUS_NOT_STARTED = 0,
+  POGDEV_BUS_CONNECTING,
+  POGDEV_BUS_CONNECTED,
+  POGDEV_BUS_AUTH_FAILED,
+} pogdev_bus_status_t;
+
 /* Se connecte au broker avec les identifiants reçus à l'adoption, publie le
  * descripteur et l'état, puis écoute les commandes.
  *
@@ -40,6 +47,9 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
  * chemin — l'interface web, un bouton physique, AirPlay — sinon pog Home
  * n'apprendrait le changement qu'au prochain tick périodique. */
 void pogdev_bus_notify(void);
+
+/* État synthétique destiné aux diagnostics locaux et à l'interface web. */
+pogdev_bus_status_t pogdev_bus_get_status(void);
 
 #ifdef __cplusplus
 }

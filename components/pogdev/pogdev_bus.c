@@ -27,6 +27,7 @@ static pogdev_describe_fn s_describe;
 static pogdev_state_fn s_state;
 static char s_topic_hello[96], s_topic_state[96], s_topic_status[96],
     s_topic_cmd[96];
+static volatile pogdev_bus_status_t s_status = POGDEV_BUS_NOT_STARTED;
 
 /* ---- le descripteur ----
  *
@@ -102,6 +103,7 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
 
   switch ((esp_mqtt_event_id_t)id) {
   case MQTT_EVENT_CONNECTED: {
+    s_status = POGDEV_BUS_CONNECTED;
     ESP_LOGI(TAG, "connecté au broker %s:%u", s_creds.mqtt_host,
              s_creds.mqtt_port);
     esp_mqtt_client_publish(s_client, s_topic_status, "online", 0, 1, 1);
@@ -125,8 +127,14 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
      * silence. */
     if (ev->error_handle != NULL && ev->error_handle->connect_return_code ==
                                         MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
+      s_status = POGDEV_BUS_AUTH_FAILED;
       ESP_LOGE(TAG, "identifiants MQTT refusés — l'appareil a probablement été "
                     "supprimé de pog Home ; efface la NVS pour te réannoncer");
+    }
+    break;
+  case MQTT_EVENT_DISCONNECTED:
+    if (s_status != POGDEV_BUS_AUTH_FAILED) {
+      s_status = POGDEV_BUS_CONNECTING;
     }
     break;
   default:
@@ -146,9 +154,14 @@ void pogdev_bus_notify(void) {
   publish_state();
 }
 
+pogdev_bus_status_t pogdev_bus_get_status(void) {
+  return s_status;
+}
+
 esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
                            pogdev_cmd_handler handler) {
   if (!pogdev_enrol_get(&s_creds)) {
+    s_status = POGDEV_BUS_NOT_STARTED;
     return ESP_ERR_INVALID_STATE; /* pas encore adopté */
   }
   s_describe = describe;
@@ -185,17 +198,21 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
       .network.reconnect_timeout_ms = MQTT_RECONNECT_TIMEOUT_MS,
   };
 
+  s_status = POGDEV_BUS_CONNECTING;
   s_client = esp_mqtt_client_init(&cfg);
   if (s_client == NULL) {
+    s_status = POGDEV_BUS_NOT_STARTED;
     return ESP_FAIL;
   }
   esp_err_t err = esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID,
                                                  mqtt_event, NULL);
   if (err != ESP_OK) {
+    s_status = POGDEV_BUS_NOT_STARTED;
     return err;
   }
   err = esp_mqtt_client_start(s_client);
   if (err != ESP_OK) {
+    s_status = POGDEV_BUS_NOT_STARTED;
     return err;
   }
   xTaskCreate(state_task, "pogdev_state", 3072, NULL, 2, NULL);

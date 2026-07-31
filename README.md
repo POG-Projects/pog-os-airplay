@@ -33,6 +33,7 @@ ESP-IDF 5.5.
 
 - Responsive dark web interface with desktop and mobile layouts
 - Guided first-run setup and password-protected settings
+- pog Home enrollment status and authenticated recovery from expired credentials
 - Automatic and manual **OTA firmware updates**
 - Automatic rollback when a newly installed firmware cannot boot successfully
 - Live logs and Wi-Fi throughput test
@@ -181,7 +182,8 @@ The web interface contains four main areas:
 - **Playback** — now playing, volume, and equalizer
 - **Effects** — addressable strip and LED matrix
 - **Settings** — Wi-Fi, device, buttons, protection, amplifier, and MQTT
-- **System** — device information, OTA, logs, speed test, and restart
+- **System** — device information, pog Home status/recovery, OTA, logs, speed
+  test, and restart
 
 ## ⬆️ OTA Updates
 
