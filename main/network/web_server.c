@@ -7,6 +7,7 @@
 #include "esp_random.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
+#include "pogdev_enrol.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -2041,6 +2042,52 @@ static esp_err_t volume_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+/* Forget this device's pog Home enrolment, then restart.
+ *
+ * The restart is part of the operation, not a suggestion: `enrol_task` reads
+ * NVS once at boot and deletes itself when it finds credentials, so erasing
+ * them changes nothing until the next boot. Answering "erased" and staying up
+ * would leave a device that reports itself unenrolled and never announces —
+ * exactly the silent, unrecoverable state this endpoint exists to end.
+ *
+ * Behind `check_auth` like every other write: anyone on the LAN who could call
+ * this could otherwise cut a speaker off from its house.
+ */
+static esp_err_t pogdev_forget_handler(httpd_req_t *req) {
+  if (check_auth(req) != ESP_OK)
+    return ESP_FAIL;
+
+  esp_err_t err = pogdev_forget();
+
+  cJSON *json = cJSON_CreateObject();
+  cJSON_AddBoolToObject(json, "success", err == ESP_OK);
+  cJSON_AddBoolToObject(json, "restarting", err == ESP_OK);
+  if (err != ESP_OK) {
+    cJSON_AddStringToObject(json, "error", esp_err_to_name(err));
+  }
+  char *json_str = cJSON_Print(json);
+  if (!json_str) {
+    cJSON_Delete(json);
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(json);
+
+  if (err != ESP_OK) {
+    return ESP_OK;
+  }
+  /* Answer first, then go: a caller that never learns whether the erase
+   * succeeded has to guess from the device disappearing, which is also what a
+   * crash looks like. */
+  ESP_LOGW(TAG, "pog Home enrolment erased via web interface, restarting");
+  vTaskDelay(pdMS_TO_TICKS(500));
+  esp_restart();
+  return ESP_OK;
+}
+
 static esp_err_t system_restart_handler(httpd_req_t *req) {
   if (check_auth(req) != ESP_OK)
     return ESP_FAIL;
@@ -2592,6 +2639,11 @@ esp_err_t web_server_start(uint16_t port) {
                                     .method = HTTP_POST,
                                     .handler = system_restart_handler};
   httpd_register_uri_handler(s_server, &system_restart_uri);
+
+  httpd_uri_t pogdev_forget_uri = {.uri = "/api/pogdev/forget",
+                                   .method = HTTP_POST,
+                                   .handler = pogdev_forget_handler};
+  httpd_register_uri_handler(s_server, &pogdev_forget_uri);
 
   // File management API
   httpd_uri_t fs_upload_uri = {.uri = "/api/fs/upload",

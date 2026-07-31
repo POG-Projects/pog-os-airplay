@@ -370,6 +370,38 @@ const char *pogdev_hw_id(void) {
   return s_hw_id;
 }
 
+esp_err_t pogdev_forget(void) {
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    /* Never enrolled. Nothing to erase, and saying so is not a failure — a
+     * caller that treated it as one would report an error for the state it was
+     * asking for. */
+    return ESP_OK;
+  }
+  if (err != ESP_OK) {
+    return err;
+  }
+  err = nvs_erase_all(h);
+  if (err == ESP_OK) {
+    err = nvs_commit(h);
+  }
+  nvs_close(h);
+
+  if (err == ESP_OK) {
+    /* Cleared in memory too. The reboot the caller owes us makes this
+     * redundant, but leaving live credentials in RAM after being told to forget
+     * them is the kind of thing that survives a refactor of the caller. */
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    memset(&s_creds, 0, sizeof(s_creds));
+    s_have_creds = false;
+    xSemaphoreGive(s_lock);
+    memset(s_claim_secret, 0, sizeof(s_claim_secret));
+    ESP_LOGW(TAG, "enrôlement effacé — redémarrage nécessaire pour se réannoncer");
+  }
+  return err;
+}
+
 const char *pogdev_fw_version(void) {
   /* Le descripteur vit dans la flash mappée de l'image en cours : la chaîne
    * reste valable pour toute la durée d'exécution, donc pas de copie. */
