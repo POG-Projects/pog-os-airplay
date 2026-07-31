@@ -217,16 +217,10 @@ esp_err_t buttons_init(void) {
   int pp, vu, vd, nx, pv;
   settings_get_buttons(&pp, &vu, &vd, &nx, &pv);
 
-  // Configure each button (adds ISR handlers)
-  configure_button(BTN_PLAY_PAUSE, pp, false);
-  configure_button(BTN_VOLUME_UP, vu, true);
-  configure_button(BTN_VOLUME_DOWN, vd, true);
-  configure_button(BTN_NEXT, nx, false);
-  configure_button(BTN_PREV, pv, false);
-
+  const int configured_gpios[BTN_COUNT] = {pp, vu, vd, nx, pv};
   bool any_configured = false;
   for (int i = 0; i < BTN_COUNT; i++) {
-    if (buttons[i].gpio >= 0) {
+    if (configured_gpios[i] >= 0 && configured_gpios[i] < GPIO_NUM_MAX) {
       any_configured = true;
       break;
     }
@@ -237,10 +231,29 @@ esp_err_t buttons_init(void) {
     return ESP_OK;
   }
 
-  // Queue + task for dispatching actions off the timer daemon task.
-  // Stack 4096 is enough for mDNS + HTTP operations in DACP.
+  // Create the dispatch path before enabling any GPIO interrupt. A button edge
+  // during initialization must never attempt to send to a NULL queue.
   s_action_queue = xQueueCreate(ACTION_QUEUE_LEN, sizeof(int));
-  task_create_spiram(button_action_task, "btn_act", 4096, NULL, 5, NULL, NULL);
+  if (s_action_queue == NULL) {
+    ESP_LOGE(TAG, "Failed to create button action queue");
+    return ESP_ERR_NO_MEM;
+  }
+  TaskHandle_t action_task = NULL;
+  task_create_spiram(button_action_task, "btn_act", 4096, NULL, 5, &action_task,
+                     NULL);
+  if (action_task == NULL) {
+    ESP_LOGE(TAG, "Failed to create button action task");
+    vQueueDelete(s_action_queue);
+    s_action_queue = NULL;
+    return ESP_ERR_NO_MEM;
+  }
+
+  // Configure each button (adds ISR handlers)
+  configure_button(BTN_PLAY_PAUSE, pp, false);
+  configure_button(BTN_VOLUME_UP, vu, true);
+  configure_button(BTN_VOLUME_DOWN, vd, true);
+  configure_button(BTN_NEXT, nx, false);
+  configure_button(BTN_PREV, pv, false);
 
   ESP_LOGI(TAG, "Buttons initialized (interrupt-driven)");
   return ESP_OK;

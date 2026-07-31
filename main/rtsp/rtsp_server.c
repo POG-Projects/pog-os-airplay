@@ -35,7 +35,7 @@ static const char *TAG = "rtsp_server";
 
 static int server_socket = -1;
 static TaskHandle_t server_task_handle = NULL;
-static bool server_running = false;
+static volatile bool server_running = false;
 
 // Static task memory for client tasks (one per slot)
 static StaticTask_t s_client_tcb[2];
@@ -418,6 +418,8 @@ static void server_task(void *pvParameters) {
   server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (server_socket < 0) {
     ESP_LOGE(TAG, "Failed to create socket: %d", errno);
+    server_running = false;
+    server_task_handle = NULL;
     vTaskDelete(NULL);
     return;
   }
@@ -435,6 +437,8 @@ static void server_task(void *pvParameters) {
     ESP_LOGE(TAG, "Failed to bind: %d", errno);
     close(server_socket);
     server_socket = -1;
+    server_running = false;
+    server_task_handle = NULL;
     vTaskDelete(NULL);
     return;
   }
@@ -443,12 +447,13 @@ static void server_task(void *pvParameters) {
     ESP_LOGE(TAG, "Failed to listen: %d", errno);
     close(server_socket);
     server_socket = -1;
+    server_running = false;
+    server_task_handle = NULL;
     vTaskDelete(NULL);
     return;
   }
 
   ESP_LOGI(TAG, "RTSP server listening on port %d", RTSP_PORT);
-  server_running = true;
 
   while (server_running) {
     int new_socket = accept(server_socket, (struct sockaddr *)&client_addr,
@@ -515,13 +520,24 @@ static void server_task(void *pvParameters) {
     }
   }
 
-  vTaskDelay(pdMS_TO_TICKS(500));
+  // Client tasks own static stacks. Do not let a new server reinitialize or
+  // reuse those slots until every client has actually exited.
+  int clients_timeout = 50; // 5 seconds max
+  while ((clients[0].task != NULL || clients[1].task != NULL) &&
+         clients_timeout-- > 0) {
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  if (clients[0].task != NULL || clients[1].task != NULL) {
+    ESP_LOGE(TAG, "RTSP clients did not stop cleanly");
+  }
 
   if (server_socket >= 0) {
     close(server_socket);
     server_socket = -1;
   }
 
+  server_running = false;
+  server_task_handle = NULL;
   vTaskDelete(NULL);
 }
 
@@ -530,10 +546,12 @@ esp_err_t rtsp_server_start(void) {
     return ESP_ERR_INVALID_STATE;
   }
 
+  server_running = true;
   server_task_handle = xTaskCreateStatic(
       server_task, "rtsp_server", SERVER_STACK_SIZE / sizeof(StackType_t), NULL,
       5, s_server_stack, &s_server_tcb);
   if (server_task_handle == NULL) {
+    server_running = false;
     return ESP_FAIL;
   }
 
@@ -549,8 +567,15 @@ void rtsp_server_stop(void) {
     server_socket = -1;
   }
 
-  if (server_task_handle != NULL) {
+  int timeout = 60; // clients may need up to five seconds to drain
+  while (server_task_handle != NULL && timeout-- > 0) {
     vTaskDelay(pdMS_TO_TICKS(100));
-    server_task_handle = NULL;
+  }
+  if (server_task_handle != NULL) {
+    ESP_LOGE(TAG, "RTSP server did not stop in time");
+  } else {
+    // The task clears its handle immediately before deleting itself. Give the
+    // scheduler one tick before its static TCB/stack can be reused.
+    vTaskDelay(1);
   }
 }

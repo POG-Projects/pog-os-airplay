@@ -36,6 +36,7 @@ set( SRC_FILES
     "network/ntp_clock.c"
     "network/socket_utils.c"
     "network/web_server.c"
+    "network/web_index.S"
     "network/ota.c"
     "network/dns_server.c"
     "network/log_stream.c"
@@ -124,6 +125,18 @@ idf_component_register(
     SRCS ${SRC_FILES}
     INCLUDE_DIRS ${INC_DIRS}
     PRIV_REQUIRES ${DEPS}
+)
+
+# Embed the control panel in the application image so normal OTA updates also
+# refresh the UI. A tiny .incbin wrapper avoids PlatformIO duplicating the
+# generated ESP-IDF binary-data source path.
+set_source_files_properties(
+    "network/web_index.S"
+    PROPERTIES
+        COMPILE_DEFINITIONS
+            "WEB_INDEX_HTML_PATH=\"${CMAKE_SOURCE_DIR}/data/www/index.html\""
+        OBJECT_DEPENDS
+            "${CMAKE_SOURCE_DIR}/data/www/index.html"
 )
 
 # Enable function wrapping for abort() to intercept panics and mute GPIO

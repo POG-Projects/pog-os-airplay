@@ -480,13 +480,23 @@ static void realtime_stop(audio_stream_t *stream) {
     state->control_socket = 0;
   }
 
+  int recv_timeout = 30;
+  while (state->task_handle && recv_timeout-- > 0) {
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
   if (state->task_handle) {
-    vTaskDelay(pdMS_TO_TICKS(200));
-    state->task_handle = NULL;
+    ESP_LOGE(TAG, "Audio receiver task did not stop in time");
+  }
+
+  int control_timeout = 30;
+  while (state->control_task_handle && control_timeout-- > 0) {
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
   if (state->control_task_handle) {
-    vTaskDelay(pdMS_TO_TICKS(100));
-    state->control_task_handle = NULL;
+    ESP_LOGE(TAG, "Audio control task did not stop in time");
+  }
+  if (!state->task_handle && !state->control_task_handle) {
+    vTaskDelay(1);
   }
 }
 

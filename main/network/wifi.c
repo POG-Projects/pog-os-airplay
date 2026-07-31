@@ -31,6 +31,8 @@ static bool s_wifi_initialized = false;
 static bool s_sta_connected = false;
 static bool s_bssid_set = false;
 static esp_timer_handle_t s_retry_timer = NULL;
+static esp_event_handler_instance_t s_wifi_event_instance;
+static esp_event_handler_instance_t s_ip_event_instance;
 
 // Saved AP config from init, used to re-enable AP without duplication
 static wifi_config_t s_ap_config;
@@ -216,12 +218,12 @@ static void wifi_init_base(void) {
     ESP_ERROR_CHECK(ret);
   }
 
-  esp_event_handler_instance_t instance_any_id;
-  esp_event_handler_instance_t instance_got_ip;
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
-      WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, &instance_any_id));
+      WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL,
+      &s_wifi_event_instance));
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
-      IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &instance_got_ip));
+      IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL,
+      &s_ip_event_instance));
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -459,15 +461,23 @@ esp_err_t wifi_scan_keep_connected(wifi_ap_record_t **ap_list,
 
 void wifi_stop(void) {
   if (s_wifi_initialized) {
-    esp_timer_stop(s_retry_timer);
+    if (s_retry_timer) {
+      esp_timer_stop(s_retry_timer);
+      esp_timer_delete(s_retry_timer);
+      s_retry_timer = NULL;
+    }
     esp_wifi_stop();
+    esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                          s_wifi_event_instance);
+    esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                          s_ip_event_instance);
     esp_wifi_deinit();
     s_wifi_initialized = false;
     s_sta_connected = false;
     s_retry_num = 0;
     if (s_wifi_event_group) {
-      xEventGroupClearBits(s_wifi_event_group,
-                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+      vEventGroupDelete(s_wifi_event_group);
+      s_wifi_event_group = NULL;
     }
   }
 }

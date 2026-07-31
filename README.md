@@ -206,23 +206,27 @@ Expand **Manual installation**, select the matching `firmware-*.bin`, and
 install it. The firmware rejects empty, oversized, malformed, or corrupt
 images.
 
-### Rollback and SPIFFS limitation
+### Rollback and web interface delivery
 
 The firmware uses two application slots. A new image remains pending until
 initialization completes; if it crashes before confirmation, the bootloader
 rolls back to the previous slot.
 
-OTA updates only the application partition. They do **not** replace SPIFFS. A
-device that still contains the previously truncated web page must receive
-`uploadfs` once over USB, or be reflashed with a current `merged-*.bin`. Normal
-firmware updates can then be performed over OTA.
+The main control panel is embedded in the application image, so every OTA
+firmware update also updates the interface. Secondary pages and optional assets
+such as live logs, the speed test, DSP data, and display resources remain on
+SPIFFS.
+
+A device that still serves an older SPIFFS-only control panel needs one manual
+application OTA or a current `merged-*.bin` installation. After that upgrade,
+the embedded panel can install future releases directly from GitHub.
 
 ## 🗂️ Repository Layout
 
 ```text
 main/                    application, audio, networking, AirPlay, and UI APIs
 components/              boards, DACs, displays, resampler, and submodules
-data/www/                web interface, live logs, EQ, and speed-test pages
+data/www/                embedded control panel plus SPIFFS web assets
 data/bg/                 optional ST7789 background image
 .github/workflows/       formatting, linting, builds, and release publication
 sdkconfig.defaults.*     per-target ESP-IDF configuration

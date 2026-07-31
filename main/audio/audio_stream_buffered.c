@@ -239,10 +239,15 @@ static void buffered_stop(audio_stream_t *stream) {
     state->buffered_listen_socket = -1;
   }
 
-  if (state->buffered_task_handle) {
-    vTaskDelay(pdMS_TO_TICKS(300));
-    state->buffered_task_handle = NULL;
+  int task_timeout = 50;
+  while (state->buffered_task_handle && task_timeout-- > 0) {
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
+  if (state->buffered_task_handle) {
+    ESP_LOGE(TAG, "Buffered audio task did not stop in time");
+    return;
+  }
+  vTaskDelay(1);
   task_free_spiram(&state->buffered_task_mem);
 
   if (state->buffered_recv_buffer) {

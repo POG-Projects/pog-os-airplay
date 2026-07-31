@@ -233,15 +233,35 @@ void dacp_init(void) {
     return;
   }
   s_mutex = xSemaphoreCreateMutex();
+  if (!s_mutex) {
+    ESP_LOGE(TAG, "Failed to create DACP mutex");
+    return;
+  }
   s_cmd_queue = xQueueCreate(CMD_QUEUE_LEN, CMD_PATH_MAX);
-  xTaskCreate(dacp_worker_task, "dacp_wk", WORKER_STACK, NULL, 4,
-              &s_worker_handle);
+  if (!s_cmd_queue) {
+    ESP_LOGE(TAG, "Failed to create DACP queue");
+    vSemaphoreDelete(s_mutex);
+    s_mutex = NULL;
+    return;
+  }
+  if (xTaskCreate(dacp_worker_task, "dacp_wk", WORKER_STACK, NULL, 4,
+                  &s_worker_handle) != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create DACP worker task");
+    vQueueDelete(s_cmd_queue);
+    vSemaphoreDelete(s_mutex);
+    s_cmd_queue = NULL;
+    s_mutex = NULL;
+    return;
+  }
   s_initialized = true;
   ESP_LOGI(TAG, "DACP client initialized");
 }
 
 void dacp_set_session(const char *dacp_id, const char *active_remote,
                       uint32_t client_ip) {
+  if (!s_initialized) {
+    return;
+  }
   xSemaphoreTake(s_mutex, portMAX_DELAY);
 
   const char *id = dacp_id ? dacp_id : "";

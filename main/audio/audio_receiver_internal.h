@@ -7,6 +7,7 @@
 #include "lwip/sockets.h"
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "audio_buffer.h"
@@ -24,6 +25,7 @@ typedef struct {
   audio_stream_t *buffered_stream;
 
   audio_decoder_t *decoder;
+  SemaphoreHandle_t decoder_mutex;
   audio_buffer_t buffer;
   audio_timing_t timing;
 

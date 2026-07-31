@@ -182,8 +182,12 @@ void playback_control_volume_down(void) {
 void playback_control_next(void) {
   switch (s_source) {
   case PLAYBACK_SOURCE_AIRPLAY:
-    dacp_send_next();
-    ESP_LOGI(TAG, "AirPlay next track via DACP");
+    if (dacp_is_active()) {
+      dacp_send_next();
+      ESP_LOGI(TAG, "AirPlay next track sent via DACP");
+    } else {
+      ESP_LOGW(TAG, "AirPlay next unavailable: AirPlay 2 MRP is not supported");
+    }
     break;
 #ifdef CONFIG_BT_A2DP_ENABLE
   case PLAYBACK_SOURCE_BLUETOOTH:
@@ -198,8 +202,13 @@ void playback_control_next(void) {
 void playback_control_prev(void) {
   switch (s_source) {
   case PLAYBACK_SOURCE_AIRPLAY:
-    dacp_send_prev();
-    ESP_LOGI(TAG, "AirPlay prev track via DACP");
+    if (dacp_is_active()) {
+      dacp_send_prev();
+      ESP_LOGI(TAG, "AirPlay previous track sent via DACP");
+    } else {
+      ESP_LOGW(TAG,
+               "AirPlay previous unavailable: AirPlay 2 MRP is not supported");
+    }
     break;
 #ifdef CONFIG_BT_A2DP_ENABLE
   case PLAYBACK_SOURCE_BLUETOOTH:

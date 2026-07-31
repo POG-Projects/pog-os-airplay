@@ -24,6 +24,37 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      bumped: ${{ steps.version.outputs.bumped }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Resolve the release number before compiling. Every binary, manifest and
+      # tag must be produced from the same version value.
+      - name: Determine version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          VERSION=$(tr -d '[:space:]' < version.txt)
+          BUMPED=false
+
+          if [ "$EVENT_NAME" != "pull_request" ] && \
+             gh release view "v$VERSION" > /dev/null 2>&1; then
+            LATEST_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
+            LATEST_VERSION=${LATEST_TAG#v}
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+            VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            BUMPED=true
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
+
   format-check:
     runs-on: ubuntu-latest
     steps:
@@ -135,7 +166,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [format-check, lint-check, platformio-build]
+    needs: [format-check, lint-check, platformio-build, version]
     strategy:
       fail-fast: false
       matrix:
@@ -175,6 +206,9 @@ jobs:
         with:
           submodules: "recursive"
 
+      - name: Set firmware version
+        run: echo "${{ needs.version.outputs.version }}" > version.txt
+
       # Build the app, then produce TWO artifacts per board:
       #   firmware-<name>.bin -> app-partition image, for OTA (POST /api/ota/update)
       #   merged-<name>.bin   -> full flash image (esptool merge_bin), for USB serial at 0x0
@@ -189,6 +223,14 @@ jobs:
             ( cd build && esptool.py --chip ${{ matrix.target }} merge_bin --format raw -o merged.bin $(cat flash_args) ) &&
             cp build/merged.bin dist/merged-${{ matrix.name }}.bin &&
             cp build/airplay2-receiver.bin dist/firmware-${{ matrix.name }}.bin
+
+      - name: Verify embedded firmware version
+        run: |
+          EXPECTED="${{ needs.version.outputs.version }}"
+          if ! strings "dist/firmware-${{ matrix.name }}.bin" | grep -Fxq "$EXPECTED"; then
+            echo "firmware-${{ matrix.name }}.bin does not embed version $EXPECTED"
+            exit 1
+          fi
 
       - name: Write manifest fragment
         run: |
@@ -228,7 +270,7 @@ jobs:
   release:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, version]
     permissions:
       contents: write
     steps:
@@ -241,32 +283,9 @@ jobs:
           pattern: firmware-*
           merge-multiple: true
 
-      - name: Determine version
-        id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION=$(cat version.txt | tr -d '[:space:]')
-          BUMPED=false
-
-          # Check if release with this version already exists
-          if gh release view "v$VERSION" > /dev/null 2>&1; then
-            echo "Release v$VERSION already exists, auto-incrementing..."
-            LATEST_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
-            LATEST_VERSION=${LATEST_TAG#v}
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
-            NEW_PATCH=$((PATCH + 1))
-            VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-            BUMPED=true
-            echo "New version: $VERSION"
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
-
       - name: Assemble manifest.json
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.version.outputs.version }}"
           {
             echo "{"
             echo "  \"version\": \"${VERSION}\","
@@ -321,20 +340,20 @@ jobs:
           cat SHA256SUMS
 
       - name: Update version.txt
-        if: steps.version.outputs.bumped == 'true'
+        if: needs.version.outputs.bumped == 'true'
         run: |
-          echo "${{ steps.version.outputs.version }}" > version.txt
+          echo "${{ needs.version.outputs.version }}" > version.txt
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add version.txt
-          git commit -m "Bump version to ${{ steps.version.outputs.version }} [skip ci]"
+          git commit -m "Bump version to ${{ needs.version.outputs.version }} [skip ci]"
           git push
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.version.outputs.version }}
+          name: v${{ needs.version.outputs.version }}
           files: |
             dist/*.bin
             dist/manifest.json

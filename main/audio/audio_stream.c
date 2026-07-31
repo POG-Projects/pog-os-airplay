@@ -29,7 +29,7 @@ static bool apply_aac_transient_mute(audio_receiver_state_t *state,
 bool audio_stream_process_frame(audio_receiver_state_t *state,
                                 uint32_t timestamp, const uint8_t *audio_data,
                                 size_t audio_len) {
-  if (!state || !state->decoder) {
+  if (!state || !state->decoder_mutex) {
     return false;
   }
 
@@ -56,10 +56,17 @@ bool audio_stream_process_frame(audio_receiver_state_t *state,
     }
     state->discard_above_rtp_valid = false;
   }
+
+  xSemaphoreTake(state->decoder_mutex, portMAX_DELAY);
+  if (!state->decoder) {
+    xSemaphoreGive(state->decoder_mutex);
+    return false;
+  }
   size_t capacity_samples = 0;
   int16_t *decode_buffer =
       audio_buffer_get_decode_buffer(&state->buffer, &capacity_samples);
   if (!decode_buffer || capacity_samples == 0) {
+    xSemaphoreGive(state->decoder_mutex);
     return false;
   }
 
@@ -68,6 +75,7 @@ bool audio_stream_process_frame(audio_receiver_state_t *state,
       audio_decoder_decode(state->decoder, audio_data, audio_len, decode_buffer,
                            capacity_samples, &info);
   if (decoded_samples <= 0) {
+    xSemaphoreGive(state->decoder_mutex);
     return false;
   }
 
@@ -79,6 +87,8 @@ bool audio_stream_process_frame(audio_receiver_state_t *state,
 
   apply_aac_transient_mute(state, decode_buffer, (size_t)decoded_samples,
                            channels);
+
+  xSemaphoreGive(state->decoder_mutex);
 
   return audio_buffer_queue_decoded(&state->buffer, &state->stats, timestamp,
                                     decode_buffer, (size_t)decoded_samples,

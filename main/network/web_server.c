@@ -8,6 +8,7 @@
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include <stdio.h>
@@ -46,7 +47,14 @@
 static const char *TAG = "web_server";
 static httpd_handle_t s_server = NULL;
 
-#define SPIFFS_CHUNK_SIZE 1024
+#define SPIFFS_CHUNK_SIZE       1024
+#define EMBEDDED_WEB_CHUNK_SIZE 4096
+
+/* The main panel is linked into the app image so it follows every OTA update.
+   Secondary pages and optional data remain on SPIFFS. The linker symbols are
+   exported by network/web_index.S. */
+extern const char web_index_html_start[] asm("_binary_index_html_start");
+extern const char web_index_html_end[] asm("_binary_index_html_end");
 
 /* Random identifier minted once per boot. The web UI polls /api/system/info
    and reloads itself when this value changes (i.e. after a reboot/OTA). It is
@@ -90,6 +98,63 @@ static esp_err_t serve_spiffs_file(httpd_req_t *req, const char *path,
   return ESP_OK;
 }
 
+static esp_err_t serve_embedded_index(httpd_req_t *req) {
+  /* web_index.S appends one NUL byte; it is not part of the HTTP body. */
+  const size_t embedded_len =
+      (size_t)(web_index_html_end - web_index_html_start);
+  const size_t len = embedded_len > 0 ? embedded_len - 1 : 0;
+  size_t offset = 0;
+
+  httpd_resp_set_type(req, "text/html; charset=utf-8");
+  /* A reboot/OTA must not resurrect a stale control panel from browser cache.
+   */
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+  while (offset < len) {
+    size_t chunk = len - offset;
+    if (chunk > EMBEDDED_WEB_CHUNK_SIZE) {
+      chunk = EMBEDDED_WEB_CHUNK_SIZE;
+    }
+    if (httpd_resp_send_chunk(req, web_index_html_start + offset,
+                              (ssize_t)chunk) != ESP_OK) {
+      httpd_resp_send_chunk(req, NULL, 0);
+      return ESP_FAIL;
+    }
+    offset += chunk;
+  }
+
+  httpd_resp_send_chunk(req, NULL, 0);
+  return ESP_OK;
+}
+
+/* esp_http_server may deliver a request body in several TCP reads.
+   Configuration handlers need the complete JSON document before parsing it. */
+static int recv_request_body(httpd_req_t *req, char *buffer, size_t capacity) {
+  if (!req || !buffer || capacity == 0 || req->content_len >= capacity) {
+    return -1;
+  }
+
+  size_t received = 0;
+  int timeouts = 0;
+  while (received < req->content_len) {
+    int ret =
+        httpd_req_recv(req, buffer + received, req->content_len - received);
+    if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+      if (++timeouts >= 3) {
+        return -1;
+      }
+      continue;
+    }
+    if (ret <= 0) {
+      return -1;
+    }
+    timeouts = 0;
+    received += (size_t)ret;
+  }
+  buffer[received] = '\0';
+  return (int)received;
+}
+
 /* ================================================================== */
 /*  Now-playing cache                                                  */
 /* ================================================================== */
@@ -99,15 +164,28 @@ static esp_err_t serve_spiffs_file(httpd_req_t *req, const char *path,
    Strings are bounded copies of the rtsp_metadata_t fields. */
 static web_server_nowplaying_t s_nowplaying;
 static void (*s_nowplaying_observer)(void);
+static SemaphoreHandle_t s_nowplaying_mutex;
 
 void web_server_get_nowplaying(web_server_nowplaying_t *out) {
-  if (out != NULL) {
+  if (out == NULL) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  if (s_nowplaying_mutex != NULL &&
+      xSemaphoreTake(s_nowplaying_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
     *out = s_nowplaying;
+    xSemaphoreGive(s_nowplaying_mutex);
   }
 }
 
 void web_server_set_nowplaying_observer(void (*cb)(void)) {
-  s_nowplaying_observer = cb;
+  if (s_nowplaying_mutex != NULL &&
+      xSemaphoreTake(s_nowplaying_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    s_nowplaying_observer = cb;
+    xSemaphoreGive(s_nowplaying_mutex);
+  } else {
+    s_nowplaying_observer = cb;
+  }
 }
 
 static void nowplaying_clear_metadata(void) {
@@ -124,6 +202,10 @@ static void on_rtsp_event_nowplaying(rtsp_event_t event,
   /* Ce qui identifie une piste, par opposition à sa progression : c'est sur ce
      triplet qu'un observateur veut être réveillé. La position avance chaque
      seconde et réveiller à chaque fois inonderait ce qui écoute. */
+  if (xSemaphoreTake(s_nowplaying_mutex, portMAX_DELAY) != pdTRUE) {
+    return;
+  }
+
   const bool was_playing = s_nowplaying.playing;
   char was_title[METADATA_STRING_MAX];
   char was_artist[METADATA_STRING_MAX];
@@ -167,11 +249,14 @@ static void on_rtsp_event_nowplaying(rtsp_event_t event,
     break;
   }
 
-  if (s_nowplaying_observer != NULL &&
-      (was_playing != s_nowplaying.playing ||
-       strcmp(was_title, s_nowplaying.title) != 0 ||
-       strcmp(was_artist, s_nowplaying.artist) != 0)) {
-    s_nowplaying_observer();
+  const bool changed = was_playing != s_nowplaying.playing ||
+                       strcmp(was_title, s_nowplaying.title) != 0 ||
+                       strcmp(was_artist, s_nowplaying.artist) != 0;
+  void (*observer)(void) = s_nowplaying_observer;
+  xSemaphoreGive(s_nowplaying_mutex);
+
+  if (observer != NULL && changed) {
+    observer();
   }
 }
 
@@ -285,7 +370,7 @@ static esp_err_t check_auth(httpd_req_t *req) {
 
 // API handlers
 static esp_err_t root_handler(httpd_req_t *req) {
-  return serve_spiffs_file(req, "/spiffs/www/index.html", "text/html");
+  return serve_embedded_index(req);
 }
 
 /* ---- Auth endpoints (always open) ---- */
@@ -342,7 +427,7 @@ static esp_err_t auth_setup_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -436,7 +521,7 @@ static esp_err_t auth_login_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -730,7 +815,7 @@ static esp_err_t wifi_config_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -799,7 +884,7 @@ static esp_err_t device_name_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -873,7 +958,7 @@ static esp_err_t audio_gain_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -961,7 +1046,7 @@ static esp_err_t matrix_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1077,7 +1162,7 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1196,7 +1281,7 @@ static esp_err_t tone_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1308,7 +1393,7 @@ static esp_err_t protection_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1433,7 +1518,7 @@ static esp_err_t buttons_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1547,7 +1632,7 @@ static esp_err_t mqtt_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1642,6 +1727,11 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
   esp_err_t err = ota_start_from_http(req);
 
   if (err != ESP_OK) {
+    esp_err_t restart_err = rtsp_server_start();
+    if (restart_err != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to restore AirPlay after OTA error: %s",
+               esp_err_to_name(restart_err));
+    }
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
                         esp_err_to_name(err));
     return ESP_FAIL;
@@ -1699,11 +1789,31 @@ static esp_err_t ota_latest_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
-  char url[192];
+  char query[64] = {0};
+  char version[24] = {0};
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+      httpd_query_key_value(query, "version", version, sizeof(version)) !=
+          ESP_OK) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing release version");
+    return ESP_FAIL;
+  }
+  for (const char *p = version; *p; p++) {
+    if ((*p < '0' || *p > '9') && *p != '.') {
+      httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                          "Invalid release version");
+      return ESP_FAIL;
+    }
+  }
+  if (version[0] == '\0') {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid release version");
+    return ESP_FAIL;
+  }
+
+  char url[224];
   int url_len = snprintf(url, sizeof(url),
                          "https://github.com/POG-Projects/pog-os-airplay/"
-                         "releases/latest/download/%s",
-                         asset);
+                         "releases/download/v%s/%s",
+                         version, asset);
   if (url_len < 0 || (size_t)url_len >= sizeof(url)) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1724,6 +1834,11 @@ static esp_err_t ota_latest_handler(httpd_req_t *req) {
   esp_err_t err = esp_https_ota(&ota_config);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "HTTPS OTA failed: %s", esp_err_to_name(err));
+    esp_err_t restart_err = rtsp_server_start();
+    if (restart_err != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to restore AirPlay after HTTPS OTA error: %s",
+               esp_err_to_name(restart_err));
+    }
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
                         esp_err_to_name(err));
     return ESP_FAIL;
@@ -1826,19 +1941,21 @@ static esp_err_t system_info_handler(httpd_req_t *req) {
 
 /* Open endpoint mirroring the cached AirPlay metadata. */
 static esp_err_t nowplaying_handler(httpd_req_t *req) {
+  web_server_nowplaying_t nowplaying = {0};
+  web_server_get_nowplaying(&nowplaying);
   cJSON *json = cJSON_CreateObject();
-  cJSON_AddBoolToObject(json, "playing", s_nowplaying.playing);
-  cJSON_AddStringToObject(json, "title", s_nowplaying.title);
-  cJSON_AddStringToObject(json, "artist", s_nowplaying.artist);
-  cJSON_AddStringToObject(json, "album", s_nowplaying.album);
-  cJSON_AddNumberToObject(json, "position", s_nowplaying.position_secs);
-  cJSON_AddNumberToObject(json, "duration", s_nowplaying.duration_secs);
+  cJSON_AddBoolToObject(json, "playing", nowplaying.playing);
+  cJSON_AddStringToObject(json, "title", nowplaying.title);
+  cJSON_AddStringToObject(json, "artist", nowplaying.artist);
+  cJSON_AddStringToObject(json, "album", nowplaying.album);
+  cJSON_AddNumberToObject(json, "position", nowplaying.position_secs);
+  cJSON_AddNumberToObject(json, "duration", nowplaying.duration_secs);
   /* Current SOURCE (iPhone) AirPlay volume as a linear Q15 (0..32768), or -1
      when nothing is playing. The UI maps it to a perceptual % to display the
      content volume separately from the board's own output level. */
   cJSON_AddNumberToObject(json, "sourceq15",
-                          s_nowplaying.playing ? (int)airplay_get_volume_q15()
-                                               : -1);
+                          nowplaying.playing ? (int)airplay_get_volume_q15()
+                                             : -1);
 
   char *json_str = cJSON_Print(json);
   if (!json_str) {
@@ -1865,7 +1982,7 @@ static esp_err_t volume_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -2210,7 +2327,7 @@ static esp_err_t eq_post_handler(httpd_req_t *req) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
     return ESP_FAIL;
   }
-  int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+  int ret = recv_request_body(req, content, sizeof(content));
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -2279,6 +2396,13 @@ esp_err_t web_server_start(uint16_t port) {
 
   // Mint the per-boot id up front so it is stable from the first request.
   (void)web_server_boot_id();
+
+  if (!s_nowplaying_mutex) {
+    s_nowplaying_mutex = xSemaphoreCreateMutex();
+    if (!s_nowplaying_mutex) {
+      return ESP_ERR_NO_MEM;
+    }
+  }
 
   // Keep the now-playing cache fresh from RTSP/AirPlay events.
   rtsp_events_register(on_rtsp_event_nowplaying, NULL);

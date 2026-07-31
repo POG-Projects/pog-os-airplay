@@ -78,15 +78,18 @@ static size_t ring_read(char *buf, size_t max) {
 /* ------------------------------------------------------------------ */
 
 static int log_vprintf_hook(const char *fmt, va_list args) {
+  va_list uart_args;
+  va_copy(uart_args, args);
   /* Always print to UART first. */
-  int ret = s_orig_vprintf(fmt, args);
+  int ret = s_orig_vprintf(fmt, uart_args);
+  va_end(uart_args);
 
   /* Format into a stack buffer and push to ring. */
   char buf[256];
-  va_list copy;
-  va_copy(copy, args);
-  int len = vsnprintf(buf, sizeof(buf), fmt, copy);
-  va_end(copy);
+  va_list ring_args;
+  va_copy(ring_args, args);
+  int len = vsnprintf(buf, sizeof(buf), fmt, ring_args);
+  va_end(ring_args);
 
   if (len > 0) {
     if ((size_t)len >= sizeof(buf)) {
@@ -254,8 +257,12 @@ esp_err_t log_stream_register(httpd_handle_t server) {
     return err;
   }
 
-  task_create_spiram(broadcast_task, "log_ws", BROADCAST_TASK_STACK, NULL, 3,
-                     NULL, NULL);
+  TaskHandle_t broadcast_handle = NULL;
+  if (task_create_spiram(broadcast_task, "log_ws", BROADCAST_TASK_STACK, NULL,
+                         3, &broadcast_handle, NULL) != pdPASS) {
+    ESP_LOGE("log_stream", "Failed to create log broadcast task");
+    return ESP_ERR_NO_MEM;
+  }
   ESP_LOGI("log_stream", "Log streaming on /ws/logs");
   return ESP_OK;
 }

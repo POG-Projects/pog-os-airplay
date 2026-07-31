@@ -1,8 +1,8 @@
-<!DOCTYPE html><html lang='zh-CN'><head>
+<!DOCTYPE html><html lang='fr'><head>
 <meta charset='UTF-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1,viewport-fit=cover'>
 <meta name='theme-color' content='#08080a'>
-<title>AirPlay音频接收器</title>
+<title>AirPlay</title>
 <style>
 :root{
   --bg:#08080a;
@@ -20,7 +20,7 @@
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
 body{
-  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Microsoft YaHei',system-ui,sans-serif;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;
   color:var(--txt);background:var(--bg);min-height:100vh;
   padding:max(20px,env(safe-area-inset-top)) 18px calc(40px + env(safe-area-inset-bottom));
   line-height:1.45;-webkit-font-smoothing:antialiased;letter-spacing:-.01em;
@@ -317,7 +317,7 @@ select option{background:#18181b;color:var(--txt)}
 }
 </style></head><body>
 
-<!-- ── 初始化向导（全新设备，未设置密码） ───────────── -->
+<!-- ── ONBOARDING (fresh device, no password set) ───────────── -->
 <div id='view-onboard' class='view wrap' hidden>
   <div class='stage'>
     <div class='steps' id='ob-steps'>
@@ -330,77 +330,77 @@ select option{background:#18181b;color:var(--txt)}
         <path d='M5 17H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-1'/>
         <path d='M12 14.5l5.5 6.5h-11l5.5-6.5z' fill='currentColor' stroke='none'/>
       </svg>
-      <h1>欢迎使用</h1>
-      <div class='lead'>我们一起来配置你的AirPlay音频接收器，仅需几步即可完成。</div>
-      <div class='actions'><button class='btn' onclick='obNext()'>开始配置</button></div>
+      <h1>Bienvenue</h1>
+      <div class='lead'>Configurons ensemble ton récepteur AirPlay. Quelques étapes suffisent.</div>
+      <div class='actions'><button class='btn' onclick='obNext()'>Commencer</button></div>
     </div>
 
     <!-- step 2 · device name -->
     <div class='step' data-step='2'>
-      <h1>设备名称</h1>
-      <div class='lead'>该名称将会显示在你设备的AirPlay播放列表内。</div>
+      <h1>Nom de l'appareil</h1>
+      <div class='lead'>Ce nom apparaîtra dans le menu AirPlay de tes appareils.</div>
       <div class='form'>
-        <div class='fg'><label class='fld'>AirPlay名称</label><input type='text' id='ob-name' placeholder='我的音箱'></div>
+        <div class='fg'><label class='fld'>Nom AirPlay</label><input type='text' id='ob-name' placeholder='Mon enceinte'></div>
       </div>
-      <div class='actions'><button class='btn' onclick='obNext()'>继续</button>
-        <button class='btn ghost' onclick='obBack()'>返回</button></div>
+      <div class='actions'><button class='btn' onclick='obNext()'>Continuer</button>
+        <button class='btn ghost' onclick='obBack()'>Retour</button></div>
     </div>
 
     <!-- step 3 · admin password -->
     <div class='step' data-step='3'>
-      <h1>管理密码</h1>
-      <div class='lead'>用于保护设备设置，修改配置时需要输入此密码。</div>
+      <h1>Mot de passe</h1>
+      <div class='lead'>Protège les réglages de ton appareil. Il sera demandé pour modifier la configuration.</div>
       <div class='form'>
-        <div class='fg'><label class='fld'>密码</label><input type='password' id='ob-pw' placeholder='至少4位字符'></div>
-        <div class='fg'><label class='fld'>确认密码</label><input type='password' id='ob-pw2' placeholder='再次输入密码'></div>
+        <div class='fg'><label class='fld'>Mot de passe</label><input type='password' id='ob-pw' placeholder='Au moins 4 caractères'></div>
+        <div class='fg'><label class='fld'>Confirmer</label><input type='password' id='ob-pw2' placeholder='Confirme le mot de passe'></div>
         <div id='ob-pw-msg'></div>
       </div>
-      <div class='actions'><button class='btn' onclick='obNext()'>继续</button>
-        <button class='btn ghost' onclick='obBack()'>返回</button></div>
+      <div class='actions'><button class='btn' onclick='obNext()'>Continuer</button>
+        <button class='btn ghost' onclick='obBack()'>Retour</button></div>
     </div>
 
     <!-- step 4 · wifi -->
     <div class='step' data-step='4'>
-      <h1>无线网络</h1>
-      <div class='lead'>选择设备需要接入的WiFi网络。</div>
+      <h1>Réseau WiFi</h1>
+      <div class='lead'>Choisis le réseau auquel l'appareil doit se connecter.</div>
       <div class='form'>
-        <button class='btn sec' onclick='obScan()'>扫描网络</button>
+        <button class='btn sec' onclick='obScan()'>Rechercher les réseaux</button>
         <div id='ob-wifi-list' class='wifi-list'></div>
-        <div class='fg'><label class='fld'>网络名称</label><input type='text' id='ob-ssid' placeholder='选择或手动输入WiFi名称'></div>
-        <div class='fg'><label class='fld'>WiFi密码</label><input type='password' id='ob-wpass' placeholder='输入WiFi密码'></div>
+        <div class='fg'><label class='fld'>Nom du réseau</label><input type='text' id='ob-ssid' placeholder='Sélectionne ou saisis un réseau'></div>
+        <div class='fg'><label class='fld'>Mot de passe</label><input type='password' id='ob-wpass' placeholder='Mot de passe WiFi'></div>
         <div id='ob-wifi-msg'></div>
       </div>
-      <div class='actions'><button class='btn' onclick='obFinish()'>完成配置</button>
-        <button class='btn ghost' onclick='obBack()'>返回</button></div>
+      <div class='actions'><button class='btn' onclick='obFinish()'>Terminer</button>
+        <button class='btn ghost' onclick='obBack()'>Retour</button></div>
     </div>
 
     <!-- step 5 · finishing -->
     <div class='step' data-step='5'>
       <div class='spin'></div>
-      <h1>正在应用配置…</h1>
-      <div class='lead' id='ob-done-msg'>设备即将重启并连接WiFi，稍后你就可以在AirPlay列表找到它。</div>
+      <h1>Configuration…</h1>
+      <div class='lead' id='ob-done-msg'>L'appareil redémarre et rejoint ton WiFi. Tu pourras le retrouver dans le menu AirPlay dans un instant.</div>
     </div>
   </div>
 </div>
 
-<!-- ── 登录界面（已设置密码，未授权） ─────────────────────── -->
+<!-- ── LOGIN (password set, not authed) ─────────────────────── -->
 <div id='view-login' class='view wrap' hidden>
   <div class='stage'>
     <svg class='glyph' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'>
       <path d='M5 17H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-1'/>
       <path d='M12 14.5l5.5 6.5h-11l5.5-6.5z' fill='currentColor' stroke='none'/>
     </svg>
-    <h1>已锁定</h1>
-    <div class='lead'>请输入管理密码进入设置页面。</div>
+    <h1>Verrouillé</h1>
+    <div class='lead'>Saisis le mot de passe pour accéder aux réglages.</div>
     <div class='form'>
-      <div class='fg'><label class='fld'>密码</label><input type='password' id='login-pw' placeholder='输入密码' autofocus></div>
+      <div class='fg'><label class='fld'>Mot de passe</label><input type='password' id='login-pw' placeholder='Mot de passe' autofocus></div>
       <div id='login-msg'></div>
     </div>
-    <div class='actions'><button class='btn' onclick='doLogin()'>解锁进入</button></div>
+    <div class='actions'><button class='btn' onclick='doLogin()'>Déverrouiller</button></div>
   </div>
 </div>
 
-<!-- ── 设置主面板（登录成功） ───────────────────────────────────────── -->
+<!-- ── PANEL (authed) ───────────────────────────────────────── -->
 <div id='view-panel' class='view wrap' hidden>
 
 <!-- mobile top hero (hidden on desktop; the sidebar carries it) -->
@@ -410,10 +410,10 @@ select option{background:#18181b;color:var(--txt)}
     <path d='M12 14.5l5.5 6.5h-11l5.5-6.5z' fill='currentColor' stroke='none'/>
   </svg>
   <h1>AirPlay</h1>
-  <div class='sub' id='hdr-name'>音频接收器</div>
+  <div class='sub' id='hdr-name'>Récepteur audio</div>
 </div>
 
-<div id='status-bar' class='status'><span class='dot'></span><span class='st-txt'>加载中…</span></div>
+<div id='status-bar' class='status'><span class='dot'></span><span class='st-txt'>Chargement…</span></div>
 
 <!-- desktop sidebar: glyph + name + status mirror + vertical tab nav -->
 <aside class='side'>
@@ -423,25 +423,25 @@ select option{background:#18181b;color:var(--txt)}
       <path d='M12 14.5l5.5 6.5h-11l5.5-6.5z' fill='currentColor' stroke='none'/>
     </svg>
     <h1>AirPlay</h1>
-    <div class='sub' id='hdr-name2'>音频接收器</div>
+    <div class='sub' id='hdr-name2'>Récepteur audio</div>
   </div>
-  <div id='status-bar2' class='status'><span class='dot'></span><span class='st-txt'>加载中…</span></div>
+  <div id='status-bar2' class='status'><span class='dot'></span><span class='st-txt'>Chargement…</span></div>
   <nav class='side-nav'>
     <button type='button' class='nav-item' data-tab='lecture' onclick="setTab('lecture')">
       <svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M5 16H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-1'/><path d='M12 13l5 6H7l5-6z' fill='currentColor' stroke='none'/></svg>
-      <span>播放</span>
+      <span>Lecture</span>
     </button>
     <button type='button' class='nav-item' data-tab='effets' onclick="setTab('effets')">
       <svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z'/><path d='M18.5 14l.8 2.2L21.5 17l-2.2.8-.8 2.2-.8-2.2L15.5 17l2.2-.8.8-2.2z'/></svg>
-      <span>灯光效果</span>
+      <span>Effets</span>
     </button>
     <button type='button' class='nav-item' data-tab='reglages' onclick="setTab('reglages')">
       <svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><line x1='4' y1='7' x2='20' y2='7'/><circle cx='9' cy='7' r='2.4' fill='var(--bg)'/><line x1='4' y1='17' x2='20' y2='17'/><circle cx='15' cy='17' r='2.4' fill='var(--bg)'/></svg>
-      <span>参数设置</span>
+      <span>Réglages</span>
     </button>
     <button type='button' class='nav-item' data-tab='systeme' onclick="setTab('systeme')">
       <svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><rect x='7' y='7' width='10' height='10' rx='2'/><line x1='10' y1='4' x2='10' y2='7'/><line x1='14' y1='4' x2='14' y2='7'/><line x1='10' y1='17' x2='10' y2='20'/><line x1='14' y1='17' x2='14' y2='20'/><line x1='4' y1='10' x2='7' y2='10'/><line x1='4' y1='14' x2='7' y2='14'/><line x1='17' y1='10' x2='20' y2='10'/><line x1='17' y1='14' x2='20' y2='14'/></svg>
-      <span>系统</span>
+      <span>Système</span>
     </button>
   </nav>
 </aside>
@@ -449,11 +449,11 @@ select option{background:#18181b;color:var(--txt)}
 <!-- main area: one .tab section per group of cards -->
 <div class='main'>
 
-<!-- ════ 标签 · 播放 ════ -->
+<!-- ════ TAB · LECTURE ════ -->
 <section class='tab' data-tab='lecture'>
 
-<div class='grp'><h2>正在播放</h2><div class='card'><div class='pad'>
-  <div id='np-empty' class='np-empty'>暂无播放内容</div>
+<div class='grp'><h2>En lecture</h2><div class='card'><div class='pad'>
+  <div id='np-empty' class='np-empty'>Rien en lecture</div>
   <div id='np-info' style='display:none'>
     <div class='np-title' id='np-title'></div>
     <div class='np-artist' id='np-artist'></div>
@@ -465,38 +465,38 @@ select option{background:#18181b;color:var(--txt)}
   </div>
 </div></div></div>
 
-<div class='grp'><h2>音量</h2><div class='card'><div class='pad'>
-  <div class='vol-head'><span class='t'>最大输出电平</span><span class='v'><span id='gain-val'>100</span><small>%</small></span></div>
+<div class='grp'><h2>Volume</h2><div class='card'><div class='pad'>
+  <div class='vol-head'><span class='t'>Niveau maximum</span><span class='v'><span id='gain-val'>100</span><small>%</small></span></div>
   <div class='vol-row'>
-    <button type='button' class='vol-btn' id='vol-down' onclick='nudgeVol("down")' aria-label='减小音量'>−</button>
+    <button type='button' class='vol-btn' id='vol-down' onclick='nudgeVol("down")' aria-label='Baisser le volume'>−</button>
     <input type='range' id='gain-slider' min='0' max='100' step='1' value='100'>
-    <button type='button' class='vol-btn' id='vol-up' onclick='nudgeVol("up")' aria-label='增大音量'>+</button>
+    <button type='button' class='vol-btn' id='vol-up' onclick='nudgeVol("up")' aria-label='Monter le volume'>+</button>
   </div>
-  <div class='hint'>限制功放最大输出。如果声音破音、音量过大可以降低；之后在iPhone端正常调节播放音量。</div>
+  <div class='hint'>Plafonne la sortie de l'ampli. Baisse-le si le son sature ou est trop fort sur tes haut-parleurs ; règle ensuite le volume normalement depuis l'iPhone.</div>
   <div id='gain-msg'></div>
 </div></div></div>
 
-<div class='grp'><h2>均衡器</h2><div class='card'><div class='pad'>
+<div class='grp'><h2>Égaliseur</h2><div class='card'><div class='pad'>
   <div class='row' style='padding:0 0 14px;border-bottom:.5px solid var(--hair);margin-bottom:14px'>
-    <span class='lbl' style='color:var(--txt)'>音调均衡</span>
+    <span class='lbl' style='color:var(--txt)'>Tonalité</span>
     <label class='sw' style='margin-left:auto'>
       <input type='checkbox' id='eq-on'><span class='track'></span>
     </label>
   </div>
-  <div class='fg'><label class='fld'>预设方案</label>
+  <div class='fg'><label class='fld'>Préréglage</label>
     <select id='eq-preset'>
-      <option value='perso'>自定义</option>
-      <option value='flat'>平直</option>
-      <option value='bass'>增强低音</option>
-      <option value='voice'>人声模式</option>
-      <option value='pop'>流行</option>
-      <option value='live'>现场</option>
-      <option value='sat'>卫星音箱</option>
+      <option value='perso'>Perso</option>
+      <option value='flat'>Plat</option>
+      <option value='bass'>Basses+</option>
+      <option value='voice'>Voix</option>
+      <option value='pop'>Pop</option>
+      <option value='live'>Live</option>
+      <option value='sat'>Satellites</option>
     </select>
   </div>
-  <div class='fg'><label class='fld'>高通滤波（小型扬声器）</label>
+  <div class='fg'><label class='fld'>Filtre anti-graves (petits HP)</label>
     <select id='eq-hpf'>
-      <option value='0'>关闭</option>
+      <option value='0'>Désactivé</option>
       <option value='80'>80 Hz</option>
       <option value='100'>100 Hz</option>
       <option value='120'>120 Hz</option>
@@ -506,76 +506,76 @@ select option{background:#18181b;color:var(--txt)}
       <option value='300'>300 Hz</option>
       <option value='400'>400 Hz</option>
     </select>
-    <div class='hint' style='margin-top:8px'>滤除低频，保护小型扬声器（卫星箱）。</div>
+    <div class='hint' style='margin-top:8px'>Coupe les graves pour protéger les petits haut-parleurs (satellites).</div>
   </div>
   <div id='eq-bands'>
     <div class='fg'>
-      <div class='vol-head' style='margin-bottom:10px'><span class='t'>低音</span>
+      <div class='vol-head' style='margin-bottom:10px'><span class='t'>Graves</span>
         <span class='v' style='font-size:24px'><span id='eq-bass-val'>0</span><small> dB</small></span></div>
       <input type='range' id='eq-bass' min='-12' max='12' step='1' value='0'>
     </div>
     <div class='fg'>
-      <div class='vol-head' style='margin-bottom:10px'><span class='t'>中音</span>
+      <div class='vol-head' style='margin-bottom:10px'><span class='t'>Médiums</span>
         <span class='v' style='font-size:24px'><span id='eq-mid-val'>0</span><small> dB</small></span></div>
       <input type='range' id='eq-mid' min='-12' max='12' step='1' value='0'>
     </div>
     <div class='fg' style='margin-bottom:0'>
-      <div class='vol-head' style='margin-bottom:10px'><span class='t'>高音</span>
+      <div class='vol-head' style='margin-bottom:10px'><span class='t'>Aigus</span>
         <span class='v' style='font-size:24px'><span id='eq-treble-val'>0</span><small> dB</small></span></div>
       <input type='range' id='eq-treble' min='-12' max='12' step='1' value='0'>
     </div>
   </div>
-  <div class='hint'>三段软件均衡：低音(~120Hz)、中音(~1kHz)、高音(~8kHz)，调节范围 -12 ~ +12dB。平直=无增益。</div>
+  <div class='hint'>Réglage logiciel des graves (~120 Hz), médiums (~1 kHz) et aigus (~8 kHz), de −12 à +12 dB. Plat = neutre.</div>
   <div id='eq-msg'></div>
 </div></div></div>
 
-<div class='grp' id='eq-card' style='display:none'><h2>音频</h2><div class='card'>
-  <a class='row' href='/eq'><span>15段均衡器</span><span class='chev'>›</span></a>
+<div class='grp' id='eq-card' style='display:none'><h2>Audio</h2><div class='card'>
+  <a class='row' href='/eq'><span>Égaliseur 15 bandes</span><span class='chev'>›</span></a>
 </div></div>
 
 </section><!-- /tab lecture -->
 
-<!-- ════ 标签 · 灯光效果 ════ -->
+<!-- ════ TAB · EFFETS ════ -->
 <section class='tab' data-tab='effets'>
 
-<div class='grp'><h2>ARGB灯光效果</h2><div class='card'><div class='pad'>
+<div class='grp'><h2>Effets lumineux</h2><div class='card'><div class='pad'>
   <div class='row' style='padding:0 0 14px;border-bottom:.5px solid var(--hair);margin-bottom:14px'>
-    <span class='lbl' style='color:var(--txt)'>LED灯带(ARGB)</span>
+    <span class='lbl' style='color:var(--txt)'>Bande LED (ARGB)</span>
     <label class='sw' style='margin-left:auto'>
       <input type='checkbox' id='ag-enabled'><span class='track'></span>
     </label>
   </div>
-  <div class='fg'><label class='fld'>效果模式</label>
+  <div class='fg'><label class='fld'>Effet</label>
     <select id='ag-effect'>
-      <optgroup label='音乐联动'>
-        <option value='0'>音量表</option>
-        <option value='1'>频谱</option>
-        <option value='2'>低频脉动</option>
-        <option value='5'>居中音量条</option>
-        <option value='6'>低频频闪</option>
-        <option value='11'>音量映射色彩</option>
+      <optgroup label='Réactifs (musique)'>
+        <option value='0'>VU-mètre</option>
+        <option value='1'>Spectre</option>
+        <option value='2'>Pulsation basses</option>
+        <option value='5'>VU centre</option>
+        <option value='6'>Strobe basses</option>
+        <option value='11'>Niveau → couleur</option>
       </optgroup>
-      <optgroup label='氛围静态'>
-        <option value='3'>彩虹</option>
-        <option value='4'>夜灯</option>
-        <option value='7'>固定单色</option>
-        <option value='8'>呼吸灯</option>
-        <option value='9'>彗星拖尾</option>
-        <option value='10'>闪烁星光</option>
+      <optgroup label='Ambiance'>
+        <option value='3'>Arc-en-ciel</option>
+        <option value='4'>Veilleuse</option>
+        <option value='7'>Couleur fixe</option>
+        <option value='8'>Respiration</option>
+        <option value='9'>Comète</option>
+        <option value='10'>Scintillement</option>
       </optgroup>
     </select>
   </div>
   <div class='row' id='ag-color-fg' style='padding:0 0 14px;border-bottom:.5px solid var(--hair);margin-bottom:14px'>
-    <span class='lbl' style='color:var(--txt)'>灯光颜色</span>
+    <span class='lbl' style='color:var(--txt)'>Couleur</span>
     <input type='color' id='ag-color' value='#2080ff' style='margin-left:auto;width:54px;height:34px;border:none;background:none;padding:0;cursor:pointer'>
   </div>
   <div class='fg' id='ag-speed-fg'>
-    <div class='vol-head' style='margin-bottom:10px'><span class='t'>动画速度</span>
+    <div class='vol-head' style='margin-bottom:10px'><span class='t'>Vitesse</span>
       <span class='v' style='font-size:24px'><span id='ag-speed-val'>5</span><small>/10</small></span></div>
     <input type='range' id='ag-speed' min='1' max='10' step='1' value='5'>
   </div>
   <div class='fg' id='ag-br-fg'>
-    <div class='vol-head' style='margin-bottom:10px'><span class='t'>亮度</span>
+    <div class='vol-head' style='margin-bottom:10px'><span class='t'>Luminosité</span>
       <span class='v' style='font-size:24px'><span id='ag-br-val'>128</span><small>/255</small></span></div>
     <input type='range' id='ag-br' min='0' max='255' step='1' value='128'>
   </div>
@@ -1272,7 +1272,7 @@ async function installLatestOTA(){
   if(versionCmp(g_otaRelease.version,g_otaInfo.firmware_version)<=0&&!confirm('Réinstaller la version v'+g_otaRelease.version+' ?'))return;
   b.disabled=true;msg('ota-msg','Téléchargement et installation de v'+g_otaRelease.version+'…','info');
   try{
-    var r=await authFetch('/api/ota/latest',{method:'POST'});
+    var r=await authFetch('/api/ota/latest?version='+encodeURIComponent(g_otaRelease.version),{method:'POST'});
     if(r.ok){watchReboot('ota-msg');}
     else{var t='Installation impossible';try{var detail=await r.text();if(detail)t=detail;}catch(e){}msg('ota-msg',t,'err');b.disabled=false;}
   }catch(e){msg('ota-msg','Installation impossible — utilise l’installation manuelle','err');b.disabled=false;}
