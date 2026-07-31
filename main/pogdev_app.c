@@ -125,6 +125,25 @@ static void describe(cJSON *entities) {
   cJSON_AddBoolToObject(ar, "read_only", true);
   cJSON_AddStringToObject(ar, "label", "Artiste");
 
+  /* Où on en est dans le morceau.
+   *
+   * L'enceinte l'a toujours su — la progression arrive dans le SET_PARAMETER
+   * `text/parameters` et alimente déjà /api/nowplaying — et ne l'avait jamais
+   * dit à pog Home. Ça compte plus qu'il n'y paraît : beaucoup d'émetteurs
+   * (le son système d'un Mac, un onglet de navigateur) envoient la progression
+   * SANS aucune métadonnée de piste, et la carte n'avait alors rien à montrer
+   * qu'un « Actif ». La seule chose que l'enceinte savait vraiment restait
+   * invisible.
+   *
+   * Un texte plutôt que deux nombres : « 1:40 / 3:14 » se lit d'un coup d'œil,
+   * là où une position en secondes demanderait une durée à côté pour vouloir
+   * dire quelque chose, et un curseur inviterait à chercher où sauter — ce que
+   * le protocole ne permet pas ici. */
+  cJSON *pr =
+      add_trait(add_entity(entities, "progress", "Progression", "media"), "text");
+  cJSON_AddBoolToObject(pr, "read_only", true);
+  cJSON_AddStringToObject(pr, "label", "Progression");
+
   /* ---- transport ---- */
   cJSON *tr = add_trait(add_entity(entities, "transport", "Lecture", "media"),
                         "action");
@@ -195,6 +214,27 @@ static void report(cJSON *root) {
 
   o = state_of(root, "artist");
   cJSON_AddStringToObject(o, "value", np.artist);
+
+  /* Vide plutôt que « 0:00 / 0:00 » quand rien ne joue : un compteur à zéro se
+   * lit comme un morceau arrêté au début, pas comme l'absence de morceau. */
+  /* Borné à un peu moins de 24 h. Ce n'est pas de la place gagnée : la durée
+   * arrive d'un SET_PARAMETER, donc d'un émetteur, et un paquet malformé
+   * afficherait « 71582788:07 » sur une carte. Une valeur absurde vaut mieux
+   * coupée que crue. */
+  char progress[24] = {0};
+  const uint32_t max_secs = 86399;
+  if (np.playing && np.duration_secs > 0) {
+    /* Publié au tick périodique et non à chaque progression : l'observateur ne
+     * se déclenche pas dessus, délibérément (voir web_server.h) — une
+     * publication par seconde sur le bus pour un compteur qu'on regarde de loin
+     * serait le genre de trafic que le throttle du cœur existe pour refuser. */
+    uint32_t pos = np.position_secs > max_secs ? max_secs : np.position_secs;
+    uint32_t dur = np.duration_secs > max_secs ? max_secs : np.duration_secs;
+    snprintf(progress, sizeof(progress), "%u:%02u / %u:%02u",
+             (unsigned)(pos / 60), (unsigned)(pos % 60), (unsigned)(dur / 60),
+             (unsigned)(dur % 60));
+  }
+  cJSON_AddStringToObject(state_of(root, "progress"), "value", progress);
 
   /* `transport` est en écriture seule — le trait `action` n'a pas d'état. On le
    * publie vide pour que le serveur voie l'entité vivante plutôt qu'absente. */
