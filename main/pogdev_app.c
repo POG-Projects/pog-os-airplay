@@ -139,8 +139,8 @@ static void describe(cJSON *entities) {
    * là où une position en secondes demanderait une durée à côté pour vouloir
    * dire quelque chose, et un curseur inviterait à chercher où sauter — ce que
    * le protocole ne permet pas ici. */
-  cJSON *pr =
-      add_trait(add_entity(entities, "progress", "Progression", "media"), "text");
+  cJSON *pr = add_trait(
+      add_entity(entities, "progress", "Progression", "media"), "text");
   cJSON_AddBoolToObject(pr, "read_only", true);
   cJSON_AddStringToObject(pr, "label", "Progression");
 

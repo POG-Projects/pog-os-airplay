@@ -39,8 +39,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-
-
 static const char *TAG = "main";
 
 /* Le rappel d'adoption : `main` démarre le bus, le composant ne peut pas. */
@@ -86,7 +84,8 @@ static void start_airplay_services(void) {
     }
     char pog_name[65] = {0};
     settings_get_device_name(pog_name, sizeof(pog_name));
-    if (pogdev_enrol_start(pog_name, pogdev_bus_start_after_adoption) != ESP_OK) {
+    if (pogdev_enrol_start(pog_name, pogdev_bus_start_after_adoption) !=
+        ESP_OK) {
       ESP_LOGW(TAG, "pogdev: l'enrôlement n'a pas pu démarrer");
     }
     /* Au démarrage, ceci ne réussit que si l'appareil était DÉJÀ adopté. S'il

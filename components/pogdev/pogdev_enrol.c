@@ -389,7 +389,8 @@ static void enrol_task(void *arg) {
   vTaskDelete(NULL);
 }
 
-esp_err_t pogdev_enrol_start(const char *device_name, pogdev_adopted_cb on_adopted) {
+esp_err_t pogdev_enrol_start(const char *device_name,
+                             pogdev_adopted_cb on_adopted) {
   if (device_name != NULL) {
     strlcpy(s_device_name, device_name, sizeof(s_device_name));
   }
