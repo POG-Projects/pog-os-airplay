@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <dirent.h>
 
 #include "esp_wifi.h"
@@ -49,6 +50,12 @@
 
 static const char *TAG = "web_server";
 static httpd_handle_t s_server = NULL;
+
+static void web_session_close(httpd_handle_t server, int sockfd) {
+  (void)server;
+  log_stream_session_closed(sockfd);
+  close(sockfd);
+}
 
 #define SPIFFS_CHUNK_SIZE       1024
 #define EMBEDDED_WEB_CHUNK_SIZE 4096
@@ -2560,6 +2567,7 @@ esp_err_t web_server_start(uint16_t port) {
           // tone + nowplaying + volume + buttons + mqtt + protection
   config.max_resp_headers = 8;
   config.stack_size = 8192;
+  config.close_fn = web_session_close;
 
   esp_err_t err = httpd_start(&s_server, &config);
   if (err != ESP_OK) {

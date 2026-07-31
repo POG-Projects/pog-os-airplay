@@ -24,3 +24,6 @@ esp_err_t log_stream_init(void);
  * and start the broadcast task.
  */
 esp_err_t log_stream_register(httpd_handle_t server);
+
+/** Remove a socket from the WebSocket broadcast list before HTTPD closes it. */
+void log_stream_session_closed(int sockfd);

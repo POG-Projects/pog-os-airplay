@@ -194,17 +194,37 @@ static void broadcast_task(void *arg) {
 
     if (xSemaphoreTake(s_client_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
       for (int i = s_client_count - 1; i >= 0; i--) {
-        esp_err_t err =
-            httpd_ws_send_frame_async(s_server, s_clients[i], &frame);
+        int fd = s_clients[i];
+        if (httpd_ws_get_fd_info(s_server, fd) != HTTPD_WS_CLIENT_WEBSOCKET) {
+          remove_client(i);
+          continue;
+        }
+        esp_err_t err = httpd_ws_send_frame_async(s_server, fd, &frame);
         if (err != ESP_OK) {
-          ESP_LOGW("log_stream", "Dropping WebSocket client fd=%d: %s",
-                   s_clients[i], esp_err_to_name(err));
+          ESP_LOGW("log_stream", "Dropping WebSocket client fd=%d: %s", fd,
+                   esp_err_to_name(err));
           remove_client(i);
         }
       }
       xSemaphoreGive(s_client_mutex);
     }
   }
+}
+
+void log_stream_session_closed(int sockfd) {
+  if (!s_client_mutex) {
+    return;
+  }
+
+  if (xSemaphoreTake(s_client_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    return;
+  }
+  for (int i = s_client_count - 1; i >= 0; i--) {
+    if (s_clients[i] == sockfd) {
+      remove_client(i);
+    }
+  }
+  xSemaphoreGive(s_client_mutex);
 }
 
 /* ------------------------------------------------------------------ */
