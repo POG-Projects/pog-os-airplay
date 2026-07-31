@@ -26,13 +26,13 @@ static const char *TAG = "mdns_airplay";
 #define AIRPLAY_FLAGS "0x4"
 
 // Metadata types advertised in the "md" txt record:
-//   0 = artwork (cover art images), 1 = progress, 2 = text (track info).
-// When artwork is disabled, drop "0" so senders do not transmit cover art,
+//   0 = text (track info), 1 = artwork (cover art images), 2 = progress.
+// When artwork is disabled, drop "1" so senders do not transmit cover art,
 // which can stall the audio pipeline and cause drop-outs on realtime streams.
 #ifdef CONFIG_ENABLE_AIRPLAY_ARTWORK
 #define AIRPLAY_METADATA_TYPES "0,1,2"
 #else
-#define AIRPLAY_METADATA_TYPES "1,2"
+#define AIRPLAY_METADATA_TYPES "0,2"
 #endif
 
 // Model identifier - AudioAccessory for speaker appearance
