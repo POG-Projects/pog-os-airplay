@@ -4,7 +4,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
+#include "lwip/netdb.h"
 #include "mdns.h"
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,10 +27,85 @@ static const char *TAG = "pogdev";
  * machine remplacée) et que le firmware doit suivre sans qu'on le reflashe. */
 #define RETRY_NOT_FOUND_MS 10000
 #define RETRY_FOUND_MS     300000
+#define FALLBACK_AFTER_MS  30000
 
 static pogdev_server_t s_server;
 static bool s_have_server;
 static SemaphoreHandle_t s_lock;
+
+/* Resolve the configured protocol-v1 base URL without teaching the enrolment
+ * code about a second transport. HTTPS is deliberately rejected here: the v1
+ * device contract only defines HTTP on the trusted LAN, and silently treating
+ * an https:// URL as clear text would be worse than remaining undiscovered. */
+static bool fallback_server(const char *url, pogdev_server_t *out) {
+  static const char prefix[] = "http://";
+  if (url == NULL || strncmp(url, prefix, sizeof(prefix) - 1) != 0) {
+    return false;
+  }
+
+  const char *authority = url + sizeof(prefix) - 1;
+  const char *end = authority + strcspn(authority, "/?#");
+  if (authority == end || strchr(authority, '@') != NULL ||
+      (*end != '\0' && !(end[0] == '/' && end[1] == '\0'))) {
+    return false;
+  }
+
+  const char *colon = NULL;
+  for (const char *p = authority; p < end; ++p) {
+    if (*p == ':') {
+      /* IPv6 literals are not supported by this firmware. */
+      if (colon != NULL) {
+        return false;
+      }
+      colon = p;
+    }
+  }
+  const char *host_end = colon != NULL ? colon : end;
+  size_t host_len = (size_t)(host_end - authority);
+  if (host_len == 0 || host_len >= sizeof(out->host)) {
+    return false;
+  }
+
+  uint16_t port = 8090;
+  if (colon != NULL) {
+    char port_text[6];
+    size_t port_len = (size_t)(end - colon - 1);
+    if (port_len == 0 || port_len >= sizeof(port_text)) {
+      return false;
+    }
+    memcpy(port_text, colon + 1, port_len);
+    port_text[port_len] = '\0';
+    errno = 0;
+    char *tail = NULL;
+    long parsed = strtol(port_text, &tail, 10);
+    if (errno != 0 || tail == NULL || *tail != '\0' || parsed < 1 ||
+        parsed > 65535) {
+      return false;
+    }
+    port = (uint16_t)parsed;
+  }
+
+  char host[sizeof(out->host)];
+  memcpy(host, authority, host_len);
+  host[host_len] = '\0';
+  struct addrinfo hints = {.ai_family = AF_INET, .ai_socktype = SOCK_STREAM};
+  struct addrinfo *addresses = NULL;
+  if (getaddrinfo(host, NULL, &hints, &addresses) != 0 || addresses == NULL) {
+    return false;
+  }
+
+  const struct sockaddr_in *resolved =
+      (const struct sockaddr_in *)addresses->ai_addr;
+  memset(out, 0, sizeof(*out));
+  strlcpy(out->host, host, sizeof(out->host));
+  out->addr.addr = resolved->sin_addr.s_addr;
+  out->api_port = port;
+  out->mqtt_port = 1883;
+  out->tls = false;
+  out->proto = 1;
+  freeaddrinfo(addresses);
+  return true;
+}
 
 static uint16_t txt_u16(const mdns_result_t *r, const char *key,
                         uint16_t fallback) {
@@ -98,6 +176,7 @@ static void discovery_task(void *arg) {
     return;
   }
 
+  const int64_t started_us = esp_timer_get_time();
   for (;;) {
     mdns_result_t *results = NULL;
     err = mdns_query_ptr(POGDEV_SERVICE, POGDEV_PROTO, QUERY_TIMEOUT_MS,
@@ -131,6 +210,29 @@ static void discovery_task(void *arg) {
     }
     if (results != NULL) {
       mdns_query_results_free(results);
+    }
+
+    /* Account for the just-completed mDNS timeout so a silent network falls
+     * back at roughly 30 seconds rather than waiting for another 10-second
+     * polling interval. */
+    if (!found && CONFIG_POGDEV_HOME_FALLBACK_URL[0] != '\0' &&
+        (esp_timer_get_time() - started_us) / 1000 + QUERY_TIMEOUT_MS >=
+            FALLBACK_AFTER_MS) {
+      pogdev_server_t fallback;
+      if (fallback_server(CONFIG_POGDEV_HOME_FALLBACK_URL, &fallback)) {
+        found = true;
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_server = fallback;
+        s_have_server = true;
+        xSemaphoreGive(s_lock);
+        ESP_LOGW(TAG,
+                 "mDNS muet depuis 30 s, repli configuré : %s (" IPSTR
+                 ") api=%u",
+                 fallback.host, IP2STR(&fallback.addr), fallback.api_port);
+      } else {
+        ESP_LOGW(TAG, "URL de repli POG Home invalide ou non résolue : %s",
+                 CONFIG_POGDEV_HOME_FALLBACK_URL);
+      }
     }
 
     vTaskDelay(pdMS_TO_TICKS(found ? RETRY_FOUND_MS : RETRY_NOT_FOUND_MS));
