@@ -2,13 +2,12 @@
 
 #include "settings.h"
 
-#include "driver/rmt_tx.h"
-#include "driver/rmt_encoder.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "led_strip.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -16,10 +15,7 @@
 
 static const char *TAG = "led_argb";
 
-// WS2812 over RMT. 10 MHz resolution => 0.1 us per tick.
-//   bit0 = 0.3 us high, 0.9 us low      bit1 = 0.9 us high, 0.3 us low
-// The latch/reset (>50 us low) is provided implicitly by the gap between
-// frames (we render at ~50 fps => 20 ms idle between transmits).
+// WS2812 over the ESP-IDF led_strip RMT backend.
 #define ARGB_RES_HZ     (10 * 1000 * 1000)
 #define ARGB_FPS        50
 #define ARGB_FRAME_US   (1000000 / ARGB_FPS)
@@ -41,20 +37,44 @@ typedef struct {
 
 static portMUX_TYPE s_audio_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile argb_audio_t s_audio = {0};
+static uint32_t s_audio_feed_calls;
 static float s_peak = 1000.0f; // AGC peak tracker (audio task only)
 
 // ============================================================================
 // Live config + runtime state
 // ============================================================================
 
+typedef struct {
+  int fx;
+  int brightness;
+  int speed;
+  uint8_t cr;
+  uint8_t cg;
+  uint8_t cb;
+  uint32_t revision;
+} argb_config_t;
+
+/* Web and pogdev handlers update the requested configuration from other
+ * FreeRTOS tasks.  The render task takes one coherent snapshot per frame;
+ * without this hand-off the compiler is allowed to retain the old effect,
+ * brightness or colour indefinitely. */
+static portMUX_TYPE s_config_mux = portMUX_INITIALIZER_UNLOCKED;
+static argb_config_t s_config = {
+    .fx = 0,
+    .brightness = 128,
+    .speed = 5,
+    .cr = 0x20,
+    .cg = 0x80,
+    .cb = 0xFF,
+    .revision = 0,
+};
+/* Renderer-owned copy.  Effect helpers only read this copy. */
+static argb_config_t s_frame_config;
+
 static volatile bool s_enabled = false; // fast-path gate for led_argb_feed()
 static bool s_running = false;
-static int s_fx = 0;
-static int s_brightness = 128; // 0..255 master scale
 static int s_gpio = -1;
 static int s_count = 0;
-static uint8_t s_cr = 0x20, s_cg = 0x80, s_cb = 0xFF; // base colour (R,G,B)
-static int s_speed = 5;                               // 1..10 animation speed
 
 /* Au bout de ce nombre de trames sans acquittement, on cesse de journaliser et
  * on considère la sortie muette : le pilote RMT sort une erreur par trame, soit
@@ -62,10 +82,8 @@ static int s_speed = 5;                               // 1..10 animation speed
 #define ARGB_TX_FAILURES_MAX 20
 static int s_tx_failures = 0;
 
-static rmt_channel_handle_t s_chan = NULL;
-static rmt_encoder_handle_t s_encoder = NULL;
+static led_strip_handle_t s_strip = NULL;
 static uint8_t *s_fb = NULL;  // working RGB framebuffer (count*3: R,G,B)
-static uint8_t *s_out = NULL; // transmit buffer (count*3: G,R,B for WS2812)
 static uint8_t *s_aux = NULL; // per-LED scratch (twinkle decay), count bytes
 
 static TaskHandle_t s_task = NULL;
@@ -128,8 +146,9 @@ static inline void fb_set(int i, uint8_t r, uint8_t g, uint8_t b) {
 
 // Set LED i to the user base colour scaled by intensity v (0..255).
 static inline void fb_set_color(int i, uint8_t v) {
-  fb_set(i, (uint8_t)(s_cr * v / 255), (uint8_t)(s_cg * v / 255),
-         (uint8_t)(s_cb * v / 255));
+  fb_set(i, (uint8_t)(s_frame_config.cr * v / 255),
+         (uint8_t)(s_frame_config.cg * v / 255),
+         (uint8_t)(s_frame_config.cb * v / 255));
 }
 
 // ============================================================================
@@ -219,7 +238,7 @@ static void fx_bass_pulse(const argb_audio_t *a) {
 // --- 3: Arc-en-ciel (flowing rainbow, speed-controlled) ---------------------
 static void fx_rainbow(void) {
   static uint32_t t = 0;
-  t += (uint32_t)s_speed;
+  t += (uint32_t)s_frame_config.speed;
   int n = s_count;
   for (int i = 0; i < n; i++) {
     uint8_t hue =
@@ -233,7 +252,7 @@ static void fx_rainbow(void) {
 // --- 4: Veilleuse (warm white breathing, speed-controlled) ------------------
 static void fx_nightlight(void) {
   static float t = 0.0f;
-  t += 0.01f * (float)s_speed;
+  t += 0.01f * (float)s_frame_config.speed;
   float breathe = 0.35f + 0.35f * sinf(t * 0.5f);
   uint8_t v = (uint8_t)(breathe * 255.0f);
   for (int i = 0; i < s_count; i++) {
@@ -279,7 +298,7 @@ static void fx_beat_strobe(const argb_audio_t *a) {
     flash = 1.0f; // rising bass transient => trigger
   }
   prev = a->bass;
-  flash -= 0.03f * (float)s_speed;
+  flash -= 0.03f * (float)s_frame_config.speed;
   if (flash < 0.0f)
     flash = 0.0f;
   uint8_t v = (uint8_t)(flash * 255.0f);
@@ -291,14 +310,14 @@ static void fx_beat_strobe(const argb_audio_t *a) {
 // --- 7: Couleur fixe (solid base colour) ------------------------------------
 static void fx_solid(void) {
   for (int i = 0; i < s_count; i++) {
-    fb_set(i, s_cr, s_cg, s_cb);
+    fb_set(i, s_frame_config.cr, s_frame_config.cg, s_frame_config.cb);
   }
 }
 
 // --- 8: Respiration (base colour breathing, speed-controlled) ---------------
 static void fx_breathe(void) {
   static float t = 0.0f;
-  t += 0.012f * (float)s_speed;
+  t += 0.012f * (float)s_frame_config.speed;
   float b = 0.12f + 0.88f * (0.5f + 0.5f * sinf(t));
   uint8_t v = (uint8_t)(b * 255.0f);
   for (int i = 0; i < s_count; i++) {
@@ -311,7 +330,7 @@ static void fx_comet(void) {
   static float pos = 0.0f;
   static int dir = 1;
   int n = s_count;
-  pos += (float)dir * (0.12f * (float)s_speed);
+  pos += (float)dir * (0.12f * (float)s_frame_config.speed);
   if (pos >= (float)(n - 1)) {
     pos = (float)(n - 1);
     dir = -1;
@@ -334,13 +353,13 @@ static void fx_comet(void) {
 // --- 10: Scintillement (random sparkles in the base colour) -----------------
 static void fx_twinkle(void) {
   int n = s_count;
-  int spawns = 1 + s_speed / 3;
+  int spawns = 1 + s_frame_config.speed / 3;
   for (int k = 0; k < spawns; k++) {
     if ((esp_random() & 0xFF) < 100) {
       s_aux[esp_random() % (uint32_t)n] = 255;
     }
   }
-  int dec = 5 + s_speed * 2;
+  int dec = 5 + s_frame_config.speed * 2;
   for (int i = 0; i < n; i++) {
     uint8_t v = s_aux[i];
     fb_set_color(i, v);
@@ -363,51 +382,42 @@ static void fx_level_color(const argb_audio_t *a) {
 }
 
 // ============================================================================
-// Strip output: apply master brightness, pack to GRB, transmit over RMT.
+// Strip output: apply master brightness, then let the ESP-IDF strip encoder
+// produce the WS2812 GRB stream and reset/latch symbol over RMT.
 // ============================================================================
 
 static void strip_show(void) {
-  /* Sortie considérée muette : on ne retente plus du tout. Il ne suffit pas de
-   * cesser de journaliser nous-mêmes — c'est rmt_tx_wait_all_done() qui émet
-   * l'erreur, une par trame. Tant qu'on l'appelle, la console reste noyée. */
+  /* Sortie considérée muette : on ne retente plus jusqu'à la prochaine
+   * reconfiguration afin qu'un défaut RMT ne noie pas la console à 50 Hz. */
   if (s_tx_failures >= ARGB_TX_FAILURES_MAX) {
     return;
   }
 
-  int br = s_brightness;
+  int br = s_frame_config.brightness;
   if (br < 0)
     br = 0;
   if (br > 255)
     br = 255;
-  for (int i = 0; i < s_count; i++) {
+  esp_err_t err = ESP_OK;
+  for (int i = 0; i < s_count && err == ESP_OK; i++) {
     uint8_t r = s_fb[i * 3 + 0];
     uint8_t g = s_fb[i * 3 + 1];
     uint8_t b = s_fb[i * 3 + 2];
-    s_out[i * 3 + 0] = (uint8_t)((g * br) / 255); // WS2812 byte order is G,R,B
-    s_out[i * 3 + 1] = (uint8_t)((r * br) / 255);
-    s_out[i * 3 + 2] = (uint8_t)((b * br) / 255);
+    err = led_strip_set_pixel(s_strip, (uint32_t)i, (uint8_t)((r * br) / 255),
+                              (uint8_t)((g * br) / 255),
+                              (uint8_t)((b * br) / 255));
   }
-  rmt_transmit_config_t tx_cfg = {.loop_count = 0};
-  if (rmt_transmit(s_chan, s_encoder, s_out, (size_t)s_count * 3, &tx_cfg) ==
-      ESP_OK) {
-    /* Le retour était ignoré. Quand le canal RMT n'aboutit pas — bande absente,
-     * broche en conflit — le pilote journalise une erreur à CHAQUE trame, donc
-     * ~50 par seconde : la console devient inutilisable et tout le reste du
-     * firmware y devient invisible. Un périphérique qui n'arrive pas à émettre
-     * doit s'arrêter et le dire une fois, pas inonder.
-     *
-     * La sortie reste réactivable sans redémarrer : toute réussite remet le
-     * compteur à zéro, et changer la configuration passe par argb_free_rmt().
-     */
-    if (rmt_tx_wait_all_done(s_chan, pdMS_TO_TICKS(50)) == ESP_OK) {
-      s_tx_failures = 0;
-    } else if (s_tx_failures < ARGB_TX_FAILURES_MAX) {
-      if (++s_tx_failures == ARGB_TX_FAILURES_MAX) {
-        ESP_LOGE(TAG,
-                 "la bande ARGB ne répond pas sur GPIO%d après %d trames — "
-                 "rendu suspendu (vérifie le câblage, ou désactive-la)",
-                 s_gpio, ARGB_TX_FAILURES_MAX);
-      }
+  if (err == ESP_OK) {
+    err = led_strip_refresh(s_strip);
+  }
+  if (err == ESP_OK) {
+    s_tx_failures = 0;
+  } else if (s_tx_failures < ARGB_TX_FAILURES_MAX) {
+    if (++s_tx_failures == ARGB_TX_FAILURES_MAX) {
+      ESP_LOGE(TAG,
+               "sortie ARGB en échec sur GPIO%d après %d trames — rendu "
+               "suspendu: %s",
+               s_gpio, ARGB_TX_FAILURES_MAX, esp_err_to_name(err));
     }
   }
 }
@@ -421,6 +431,17 @@ static void render_task(void *arg) {
   int64_t next_us = esp_timer_get_time();
 
   while (!s_task_stop) {
+    argb_config_t config;
+    portENTER_CRITICAL(&s_config_mux);
+    config = s_config;
+    portEXIT_CRITICAL(&s_config_mux);
+    if (config.revision != s_frame_config.revision) {
+      s_frame_config = config;
+      /* A live change must also wake an output suspended after RMT failures;
+       * previously only a reboot or a GPIO/count change cleared this state. */
+      s_tx_failures = 0;
+    }
+
     argb_audio_t a;
     portENTER_CRITICAL(&s_audio_mux);
     a.level = s_audio.level;
@@ -429,7 +450,7 @@ static void render_task(void *arg) {
     portEXIT_CRITICAL(&s_audio_mux);
 
     memset(s_fb, 0, (size_t)s_count * 3);
-    switch (s_fx) {
+    switch (s_frame_config.fx) {
     case 1:
       fx_spectrum(&a);
       break;
@@ -495,26 +516,17 @@ static void render_task(void *arg) {
 // Start / stop
 // ============================================================================
 
-static void argb_free_rmt(void) {
+static void argb_free_strip(void) {
   s_tx_failures = 0;
-  if (s_chan) {
-    rmt_disable(s_chan);
-  }
-  if (s_encoder) {
-    rmt_del_encoder(s_encoder);
-    s_encoder = NULL;
-  }
-  if (s_chan) {
-    rmt_del_channel(s_chan);
-    s_chan = NULL;
+  if (s_strip) {
+    led_strip_del(s_strip);
+    s_strip = NULL;
   }
 }
 
 static void argb_free_buffers(void) {
   free(s_fb);
   s_fb = NULL;
-  free(s_out);
-  s_out = NULL;
   free(s_aux);
   s_aux = NULL;
 }
@@ -544,16 +556,22 @@ static void argb_stop(void) {
   }
   s_task_stop = false;
 
-  argb_free_rmt();
+  argb_free_strip();
   argb_free_buffers();
   s_running = false;
   ESP_LOGI(TAG, "strip stopped");
 }
 
-static void apply_color(uint32_t color) {
-  s_cr = (uint8_t)((color >> 16) & 0xFF);
-  s_cg = (uint8_t)((color >> 8) & 0xFF);
-  s_cb = (uint8_t)(color & 0xFF);
+static void apply_config(int fx, int brightness, uint32_t color, int speed) {
+  portENTER_CRITICAL(&s_config_mux);
+  s_config.fx = fx;
+  s_config.brightness = brightness;
+  s_config.cr = (uint8_t)((color >> 16) & 0xFF);
+  s_config.cg = (uint8_t)((color >> 8) & 0xFF);
+  s_config.cb = (uint8_t)(color & 0xFF);
+  s_config.speed = (speed < 1) ? 1 : (speed > 10 ? 10 : speed);
+  s_config.revision++;
+  portEXIT_CRITICAL(&s_config_mux);
 }
 
 static void argb_start(int fx, int brightness, int gpio, int count,
@@ -567,52 +585,45 @@ static void argb_start(int fx, int brightness, int gpio, int count,
   }
 
   s_fb = malloc((size_t)count * 3);
-  s_out = malloc((size_t)count * 3);
   s_aux = calloc((size_t)count, 1);
-  if (!s_fb || !s_out || !s_aux) {
+  if (!s_fb || !s_aux) {
     ESP_LOGE(TAG, "strip buffer alloc failed");
     argb_free_buffers();
     return;
   }
   memset(s_fb, 0, (size_t)count * 3);
-  memset(s_out, 0, (size_t)count * 3);
 
-  rmt_tx_channel_config_t chan_cfg = {
+  led_strip_config_t strip_cfg = {
+      .strip_gpio_num = gpio,
+      .max_leds = (uint32_t)count,
+      .led_model = LED_MODEL_WS2812,
+      .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
+      .flags = {.invert_out = false},
+  };
+  led_strip_rmt_config_t rmt_cfg = {
       .clk_src = RMT_CLK_SRC_DEFAULT,
-      .gpio_num = gpio,
       .mem_block_symbols = 64,
       .resolution_hz = ARGB_RES_HZ,
-      .trans_queue_depth = 4,
+      .flags = {.with_dma = false},
   };
-  if (rmt_new_tx_channel(&chan_cfg, &s_chan) != ESP_OK) {
-    ESP_LOGE(TAG, "rmt_new_tx_channel failed (gpio=%d)", gpio);
-    argb_free_buffers();
-    return;
-  }
-  rmt_bytes_encoder_config_t bytes_cfg = {
-      .bit0 = {.level0 = 1, .duration0 = 3, .level1 = 0, .duration1 = 9},
-      .bit1 = {.level0 = 1, .duration0 = 9, .level1 = 0, .duration1 = 3},
-      .flags = {.msb_first = 1},
-  };
-  if (rmt_new_bytes_encoder(&bytes_cfg, &s_encoder) != ESP_OK ||
-      rmt_enable(s_chan) != ESP_OK) {
-    ESP_LOGE(TAG, "rmt encoder/enable failed");
-    argb_free_rmt();
+  esp_err_t strip_err =
+      led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip);
+  if (strip_err != ESP_OK) {
+    ESP_LOGE(TAG, "led strip init failed (gpio=%d): %s", gpio,
+             esp_err_to_name(strip_err));
     argb_free_buffers();
     return;
   }
 
-  s_fx = fx;
-  s_brightness = brightness;
   s_gpio = gpio;
   s_count = count;
-  apply_color(color);
-  s_speed = (speed < 1) ? 1 : (speed > 10 ? 10 : speed);
+  apply_config(fx, brightness, color, speed);
 
   portENTER_CRITICAL(&s_audio_mux);
   s_audio.level = 0.0f;
   s_audio.bass = 0.0f;
   s_audio.treble = 0.0f;
+  s_audio_feed_calls = 0;
   portEXIT_CRITICAL(&s_audio_mux);
   s_peak = 1000.0f;
 
@@ -628,13 +639,13 @@ static void argb_start(int fx, int brightness, int gpio, int count,
     s_enabled = false;
     s_running = false;
     s_task = NULL;
-    argb_free_rmt();
+    argb_free_strip();
     argb_free_buffers();
     return;
   }
 
   ESP_LOGI(TAG, "strip started: fx=%d br=%d gpio=%d count=%d speed=%d", fx,
-           brightness, gpio, count, s_speed);
+           brightness, gpio, count, speed);
 }
 
 // ============================================================================
@@ -666,11 +677,8 @@ void led_argb_reconfigure(void) {
 
   // Same GPIO + count already running: apply fx/brightness/colour/speed live.
   if (s_running && gpio == s_gpio && count == s_count) {
-    s_fx = fx;
-    s_brightness = br;
-    apply_color(color);
-    s_speed = (speed < 1) ? 1 : (speed > 10 ? 10 : speed);
-    ESP_LOGI(TAG, "strip updated live: fx=%d br=%d speed=%d", fx, br, s_speed);
+    apply_config(fx, br, color, speed);
+    ESP_LOGI(TAG, "strip updated live: fx=%d br=%d speed=%d", fx, br, speed);
     return;
   }
 
@@ -724,5 +732,18 @@ void led_argb_feed(const int16_t *pcm, size_t stereo_samples) {
   s_audio.level = (level > pl) ? level : (pl * 0.8f + level * 0.2f);
   s_audio.bass = (bass > pb) ? bass : (pb * 0.85f + bass * 0.15f);
   s_audio.treble = (treble > pt) ? treble : (pt * 0.7f + treble * 0.3f);
+  s_audio_feed_calls++;
+  portEXIT_CRITICAL(&s_audio_mux);
+}
+
+void led_argb_get_audio_stats(led_argb_audio_stats_t *stats) {
+  if (!stats) {
+    return;
+  }
+  portENTER_CRITICAL(&s_audio_mux);
+  stats->feed_calls = s_audio_feed_calls;
+  stats->level = s_audio.level;
+  stats->bass = s_audio.bass;
+  stats->treble = s_audio.treble;
   portEXIT_CRITICAL(&s_audio_mux);
 }

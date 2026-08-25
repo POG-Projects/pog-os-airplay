@@ -4,6 +4,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef struct {
+  uint32_t feed_calls;
+  float level;
+  float bass;
+  float treble;
+} led_argb_audio_stats_t;
+
 /**
  * Optional addressable RGB LED strip (WS2812 / WS2812B / SK6812),
  * audio-reactive. Driven over the RMT peripheral. Replaces the MAX7219 matrix
@@ -41,3 +48,6 @@ void led_argb_reconfigure(void);
  *                       int16 values).
  */
 void led_argb_feed(const int16_t *pcm, size_t stereo_samples);
+
+/** Snapshot the audio values currently consumed by reactive effects. */
+void led_argb_get_audio_stats(led_argb_audio_stats_t *stats);

@@ -90,6 +90,7 @@ set( DEPS
     esp_ringbuf
     esp_driver_i2s
     esp_driver_rmt
+    espressif__led_strip
     esp_timer
     esp_http_server
     esp_http_client

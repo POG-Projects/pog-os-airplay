@@ -1824,7 +1824,8 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
    with .github/workflows/ci-release.yml. An empty string means that the CI does
    not publish a compatible OTA image for this configuration. */
 static const char *ota_release_env(void) {
-#if defined(CONFIG_BOARD_XIAO_ESP32S3) && CONFIG_BOARD_XIAO_ESP32S3
+#if defined(POG_BOARD_XIAO_S3) || \
+    (defined(CONFIG_BOARD_XIAO_ESP32S3) && CONFIG_BOARD_XIAO_ESP32S3)
   return "xiao-s3";
 #elif defined(CONFIG_BOARD_ESP32S3_GENERIC) && CONFIG_BOARD_ESP32S3_GENERIC
   return "esp32s3";
@@ -2055,9 +2056,11 @@ static esp_err_t audio_stats_handler(httpd_req_t *req) {
 
   audio_runtime_stats_t audio = {0};
   audio_output_runtime_stats_t output = {0};
+  led_argb_audio_stats_t argb = {0};
   ptp_stats_t ptp = {0};
   audio_receiver_get_runtime_stats(&audio);
   audio_output_get_runtime_stats(&output);
+  led_argb_get_audio_stats(&argb);
   ptp_clock_get_stats(&ptp);
 
   uint32_t buffer_ms =
@@ -2107,6 +2110,10 @@ static esp_err_t audio_stats_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(json, "process_calls", output.process_calls);
   cJSON_AddNumberToObject(json, "stack_high_water_words",
                           output.stack_high_water_words);
+  cJSON_AddNumberToObject(json, "argb_feed_calls", argb.feed_calls);
+  cJSON_AddNumberToObject(json, "argb_level", argb.level);
+  cJSON_AddNumberToObject(json, "argb_bass", argb.bass);
+  cJSON_AddNumberToObject(json, "argb_treble", argb.treble);
   cJSON_AddBoolToObject(json, "ptp_locked", ptp_clock_is_locked());
   cJSON_AddNumberToObject(json, "ptp_offset_ns", ptp.filtered_offset_ns);
   cJSON_AddNumberToObject(json, "ptp_lock_time_ms", ptp.lock_time_ms);

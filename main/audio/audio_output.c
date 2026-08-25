@@ -26,8 +26,16 @@
 #define I2S_VCC_PIN CONFIG_I2S_VCC_IO
 #endif
 
-#define TAG           "audio_output"
-#define I2S_SCK_PIN   CONFIG_I2S_SCK_IO
+#define TAG "audio_output"
+#ifdef POG_BOARD_XIAO_S3
+/* The XIAO uses GPIO8/D9 for the ARGB strip.  Old generated sdkconfig files
+ * can still contain the generic ESP32-S3 MCLK value (GPIO8), even though the
+ * XIAO defaults set it to -1.  The MAX98357A does not need MCLK, so make the
+ * board contract explicit in the compiled source and keep GPIO8 free. */
+#define I2S_SCK_PIN I2S_GPIO_UNUSED
+#else
+#define I2S_SCK_PIN CONFIG_I2S_SCK_IO
+#endif
 #define I2S_BCK_PIN   CONFIG_I2S_BCK_IO
 #define I2S_LRCK_PIN  CONFIG_I2S_WS_IO
 #define I2S_DOUT_PIN  CONFIG_I2S_DO_IO
