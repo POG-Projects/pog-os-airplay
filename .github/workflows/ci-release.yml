@@ -266,6 +266,14 @@ jobs:
         with:
           name: firmware-${{ matrix.name }}
           path: dist/*
+          # Ces artefacts ne servent qu'a passer du job `build` au job `release`
+          # du meme run : le firmware publie vit dans la release, pas ici. Sans
+          # cette ligne GitHub les garde 90 jours, et une matrice de cartes
+          # multipliee par chaque push finit par saturer le stockage de toute
+          # l'organisation — mesure en aout 2026 : 507 Go-mois pour ce seul
+          # depot, contre 0,5 Go inclus, ce qui a bloque la publication d'un
+          # canal dans un autre depot.
+          retention-days: 1
 
   release:
     if: github.event_name != 'pull_request'
