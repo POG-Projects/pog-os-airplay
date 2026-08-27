@@ -55,6 +55,20 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
 
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # La politique de survie du lien MQTT est pure (pogdev_retry.c) : elle se
+      # vérifie ici sans ESP-IDF ni matériel, comme hub_retry chez pog-os-vox.
+      - name: Compile and run pogdev retry policy tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I components/pogdev/include \
+            test_host/test_pogdev_retry.c components/pogdev/pogdev_retry.c \
+            -o /tmp/pog-airplay-retry-test
+          /tmp/pog-airplay-retry-test
+
   format-check:
     runs-on: ubuntu-latest
     steps:
@@ -166,7 +180,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [format-check, lint-check, platformio-build, version]
+    needs: [format-check, lint-check, platformio-build, version, host-tests]
     strategy:
       fail-fast: false
       matrix:

@@ -3,13 +3,23 @@
  * Protocole : pog-docs/protocoles/pogdev.md §4. L'appareil publie un `hello`
  * retenu qui déclare ses traits, son `state` à chaque changement, et écoute
  * `cmd`. Sa disponibilité est portée par `status` avec un testament (LWT).
+ *
+ * Le lien ne renonce jamais (panne des 24-27 août 2026, enceintes muettes
+ * jusqu'au débranchage) : esp-mqtt retente sans fin, la politique de
+ * pogdev_retry.c décide quand suivre un serveur qui a déménagé et quand
+ * relever des identifiants refusés — et une tâche de soin exécute ces gestes
+ * hors des handlers d'événements, comme l'exige esp-mqtt.
  */
 #include "pogdev_bus.h"
+#include "pogdev_discovery.h"
 #include "pogdev_enrol.h"
+#include "pogdev_retry.h"
 
 #include "cJSON.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
 #include <stdio.h>
@@ -19,6 +29,15 @@ static const char *TAG = "pogdev";
 
 #define STATE_PERIOD_MS           30000
 #define MQTT_RECONNECT_TIMEOUT_MS 60000
+/* Quand relancer le client échoue (mémoire, transport), on réessaie à ce
+ * rythme — jamais d'abandon : un appareil mural doit retrouver un serveur qui
+ * revient des heures plus tard. */
+#define RELANCE_PERIOD_MS 60000
+
+/* Ordres portés par la tâche de soin. */
+#define SOIN_RELEVE (1u << 0) /* identifiants refusés : demander au serveur */
+#define SOIN_REPRISE \
+  (1u << 1) /* échecs installés : le serveur a-t-il bougé ? */
 
 static esp_mqtt_client_handle_t s_client;
 static pogdev_creds_t s_creds;
@@ -28,6 +47,12 @@ static pogdev_state_fn s_state;
 static char s_topic_hello[96], s_topic_state[96], s_topic_status[96],
     s_topic_cmd[96];
 static volatile pogdev_bus_status_t s_status = POGDEV_BUS_NOT_STARTED;
+static pogdev_retry_t s_retry;
+static TaskHandle_t s_soin;
+static TaskHandle_t s_state_task_handle;
+/* Protège s_client pendant une bascule (arrêt/recréation par la tâche de
+ * soin) contre les publications venues d'autres tâches. */
+static SemaphoreHandle_t s_client_lock;
 
 /* ---- le descripteur ----
  *
@@ -57,19 +82,29 @@ static char *build_hello(void) {
 }
 
 static void publish_state(void) {
-  if (s_client == NULL || s_state == NULL) {
+  if (s_state == NULL || s_client_lock == NULL) {
     return;
   }
-  cJSON *root = cJSON_CreateObject();
-  s_state(root);
+  /* Délai court et abandon silencieux : pendant une bascule, l'état est de
+   * toute façon reperdu par le broker, et le tick suivant rattrape. Attendre
+   * ici depuis la tâche du client MQTT bloquerait l'arrêt que la bascule
+   * attend — l'interblocage classique. */
+  if (xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+    return;
+  }
+  if (s_client != NULL) {
+    cJSON *root = cJSON_CreateObject();
+    s_state(root);
 
-  char *json = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (json == NULL) {
-    return;
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json != NULL) {
+      esp_mqtt_client_publish(s_client, s_topic_state, json, 0, 0,
+                              1 /* retenu */);
+      cJSON_free(json);
+    }
   }
-  esp_mqtt_client_publish(s_client, s_topic_state, json, 0, 0, 1 /* retenu */);
-  cJSON_free(json);
+  xSemaphoreGive(s_client_lock);
 }
 
 static void on_command(const char *data, int len) {
@@ -95,6 +130,19 @@ static void on_command(const char *data, int len) {
   cJSON_Delete(root);
 }
 
+static bool connack_refuse_identifiants(const esp_mqtt_event_handle_t ev) {
+  /* Le type d'erreur d'abord : sur un incident de transport, le code CONNACK
+   * du handle est un reliquat du refus précédent, et le lire seul ferait
+   * passer une coupure réseau pour un compte révoqué. */
+  if (ev->error_handle == NULL ||
+      ev->error_handle->error_type != MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+    return false;
+  }
+  esp_mqtt_connect_return_code_t code = ev->error_handle->connect_return_code;
+  return code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED ||
+         code == MQTT_CONNECTION_REFUSE_BAD_USERNAME;
+}
+
 static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
                        void *data) {
   (void)args;
@@ -104,6 +152,7 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
   switch ((esp_mqtt_event_id_t)id) {
   case MQTT_EVENT_CONNECTED: {
     s_status = POGDEV_BUS_CONNECTED;
+    pogdev_retry_connecte(&s_retry);
     ESP_LOGI(TAG, "connecté au broker %s:%u", s_creds.mqtt_host,
              s_creds.mqtt_port);
     esp_mqtt_client_publish(s_client, s_topic_status, "online", 0, 1, 1);
@@ -121,20 +170,33 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
     on_command(ev->data, ev->data_len);
     break;
   case MQTT_EVENT_ERROR:
-    /* Un refus d'authentification veut dire que l'appareil a été supprimé côté
-     * serveur : le compte ne reviendra pas, et réessayer en boucle ne sert à
-     * rien. On le dit clairement plutôt que de laisser la pile réessayer en
-     * silence. */
-    if (ev->error_handle != NULL && ev->error_handle->connect_return_code ==
-                                        MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
+    /* Un refus d'authentification n'est PAS un ordre d'oubli : pendant que
+     * pog Home redémarre, le broker refuse aussi avec des comptes pas encore
+     * reprovisionnés, et la ré-adoption d'un appareil effacé exige un humain.
+     * Quand les refus persistent, la relève (secret de réclamation en NVS)
+     * demande au serveur — c'est lui qui tranche : 404, « pending » visible
+     * dans l'inventaire, ou identifiants neufs. */
+    if (connack_refuse_identifiants(ev)) {
       s_status = POGDEV_BUS_AUTH_FAILED;
-      ESP_LOGE(TAG, "identifiants MQTT refusés — l'appareil a probablement été "
-                    "supprimé de pog Home ; efface la NVS pour te réannoncer");
+      ESP_LOGE(TAG, "identifiants MQTT refusés — relève auprès de pog Home "
+                    "si cela persiste");
+      if (s_soin != NULL &&
+          pogdev_retry_refus_auth(&s_retry,
+                                  (uint32_t)(esp_timer_get_time() / 1000))) {
+        xTaskNotify(s_soin, SOIN_RELEVE, eSetBits);
+      }
     }
     break;
   case MQTT_EVENT_DISCONNECTED:
     if (s_status != POGDEV_BUS_AUTH_FAILED) {
       s_status = POGDEV_BUS_CONNECTING;
+    }
+    /* Le serveur a peut-être déménagé : l'adresse gelée à l'adoption a déjà
+     * survécu à un déménagement de pog Home (26 août 2026) pendant que la
+     * découverte, elle, connaissait la nouvelle. La tâche de soin compare et
+     * ne bascule que si quelque chose a vraiment changé. */
+    if (s_soin != NULL && pogdev_retry_echec(&s_retry)) {
+      xTaskNotify(s_soin, SOIN_REPRISE, eSetBits);
     }
     break;
   default:
@@ -150,23 +212,13 @@ static void state_task(void *arg) {
   }
 }
 
-void pogdev_bus_notify(void) {
-  publish_state();
-}
-
-pogdev_bus_status_t pogdev_bus_get_status(void) {
-  return s_status;
-}
-
-esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
-                           pogdev_cmd_handler handler) {
+/* (Re)crée et démarre le client MQTT depuis les identifiants en NVS. Appelée
+ * au démarrage puis à chaque bascule ; suppose que s_client est NULL. */
+static esp_err_t bus_launch(void) {
   if (!pogdev_enrol_get(&s_creds)) {
     s_status = POGDEV_BUS_NOT_STARTED;
     return ESP_ERR_INVALID_STATE; /* pas encore adopté */
   }
-  s_describe = describe;
-  s_state = state;
-  s_handler = handler;
 
   snprintf(s_topic_hello, sizeof(s_topic_hello), "pog/%s/hello",
            s_creds.device_id);
@@ -199,22 +251,113 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
   };
 
   s_status = POGDEV_BUS_CONNECTING;
-  s_client = esp_mqtt_client_init(&cfg);
-  if (s_client == NULL) {
+  esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
+  if (client == NULL) {
     s_status = POGDEV_BUS_NOT_STARTED;
-    return ESP_FAIL;
+    return ESP_ERR_NO_MEM;
   }
-  esp_err_t err = esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID,
+  esp_err_t err = esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID,
                                                  mqtt_event, NULL);
+  if (err == ESP_OK) {
+    err = esp_mqtt_client_start(client);
+  }
   if (err != ESP_OK) {
+    esp_mqtt_client_destroy(client);
     s_status = POGDEV_BUS_NOT_STARTED;
     return err;
   }
-  err = esp_mqtt_client_start(s_client);
+  s_client = client;
+  return ESP_OK;
+}
+
+/* Arrête le client puis le relance sur les identifiants et l'adresse frais.
+ * Vit dans la tâche de soin : esp-mqtt interdit stop() depuis ses handlers. */
+static void bus_relancer(void) {
+  xSemaphoreTake(s_client_lock, portMAX_DELAY);
+  if (s_client != NULL) {
+    /* stop() d'abord : il attend la fin de la tâche du client, donc plus
+     * aucun handler ne court quand le handle devient NULL puis disparaît. */
+    esp_mqtt_client_handle_t vieux = s_client;
+    esp_mqtt_client_stop(vieux);
+    s_client = NULL;
+    esp_mqtt_client_destroy(vieux);
+  }
+  pogdev_retry_init(&s_retry);
+  while (bus_launch() != ESP_OK) {
+    /* Relancer peut échouer (mémoire) : réessayer, jamais renoncer — le
+     * WARN d'un seul essai perdu est exactement ce qui a laissé des
+     * enceintes saines et muettes pendant des jours. */
+    ESP_LOGW(TAG, "relance du bus impossible, nouvel essai dans %u s",
+             (unsigned)(RELANCE_PERIOD_MS / 1000));
+    vTaskDelay(pdMS_TO_TICKS(RELANCE_PERIOD_MS));
+  }
+  xSemaphoreGive(s_client_lock);
+}
+
+static void soin_task(void *arg) {
+  (void)arg;
+  for (;;) {
+    uint32_t ordres = 0;
+    xTaskNotifyWait(0, UINT32_MAX, &ordres, portMAX_DELAY);
+    bool relancer = false;
+
+    if (ordres & SOIN_RELEVE) {
+      if (pogdev_enrol_recollect()) {
+        ESP_LOGI(TAG, "identifiants relevés à neuf, on repart avec");
+        relancer = true;
+      }
+    }
+    if (!relancer && (ordres & SOIN_REPRISE)) {
+      pogdev_server_t srv;
+      if (pogdev_discovery_get(&srv) &&
+          pogdev_enrol_update_host(&srv.addr, srv.mqtt_port)) {
+        relancer = true;
+      }
+    }
+    if (relancer) {
+      bus_relancer();
+    }
+  }
+}
+
+void pogdev_bus_notify(void) {
+  publish_state();
+}
+
+pogdev_bus_status_t pogdev_bus_get_status(void) {
+  return s_status;
+}
+
+esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
+                           pogdev_cmd_handler handler) {
+  s_describe = describe;
+  s_state = state;
+  s_handler = handler;
+  pogdev_retry_init(&s_retry);
+
+  if (s_client_lock == NULL) {
+    s_client_lock = xSemaphoreCreateMutex();
+    if (s_client_lock == NULL) {
+      return ESP_ERR_NO_MEM;
+    }
+  }
+
+  esp_err_t err = bus_launch();
   if (err != ESP_OK) {
-    s_status = POGDEV_BUS_NOT_STARTED;
     return err;
   }
-  xTaskCreate(state_task, "pogdev_state", 3072, NULL, 2, NULL);
+  if (s_state_task_handle == NULL &&
+      xTaskCreate(state_task, "pogdev_state", 3072, NULL, 2,
+                  &s_state_task_handle) != pdPASS) {
+    s_state_task_handle = NULL;
+    ESP_LOGW(TAG, "tâche d'état non créée : l'état ne partira que sur "
+                  "changement");
+  }
+  if (s_soin == NULL &&
+      xTaskCreate(soin_task, "pogdev_soin", 4096, NULL, 2, &s_soin) != pdPASS) {
+    s_soin = NULL;
+    ESP_LOGW(TAG, "tâche de soin non créée : pas de suivi de déménagement ni "
+                  "de relève");
+  }
   return ESP_OK;
 }
