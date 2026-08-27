@@ -34,6 +34,8 @@ ESP-IDF 5.5.
 - Responsive dark web interface with desktop and mobile layouts
 - Guided first-run setup and password-protected settings
 - pog Home enrollment status and authenticated recovery from expired credentials
+- BLE onboarding from pog Console on ESP32-S3 (AccessorySetupKit, Wi-Fi
+  handover, and queue-free pog Home adoption)
 - Automatic and manual **OTA firmware updates**
 - Automatic rollback when a newly installed firmware cannot boot successfully
 - Live logs and Wi-Fi throughput test
@@ -176,6 +178,14 @@ After the first flash:
 3. Choose the AirPlay device name and administrator password.
 4. Select the home Wi-Fi network.
 5. Wait for the device to reboot, then open its new IP address.
+
+On ESP32-S3 targets the speaker also advertises the **POG accessory
+provisioning service** over BLE while it is unprovisioned. A POG household can
+skip the captive portal entirely: pog Console (iOS) discovers the speaker
+through the system accessory picker, hands over the Wi-Fi credentials and a
+pog Auth proof over an encrypted GATT link, and the speaker joins the network
+and is adopted by pog Home without going through the pending-device queue. BLE
+stays off once Wi-Fi credentials exist.
 
 The web interface contains four main areas:
 

@@ -50,3 +50,23 @@ CONFIG_I2S_GND_IO=14
 # CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
 #
 # See components/display/README.md for full setup instructions.
+
+# --- Onboarding BLE (AccessorySetupKit / pog Console) ---
+# NimBLE, périphérique seul : le service GATT de provisioning n'est annoncé
+# que tant qu'aucun réseau Wi-Fi n'est configuré, puis l'appareil redémarre
+# et le BLE ne se rallume plus. L'ESP32-S3 n'a pas de BR/EDR : pas de
+# conflit avec l'A2DP, qui ne vit que sur les cibles ESP32 classiques.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# Un seul central (l'iPhone qui configure), pas de rôle scanner : chaque rôle
+# retiré rend de la DRAM interne, déjà comptée pour l'audio temps réel.
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+# Les clés de jumelage survivent au redémarrage : sans cela iOS garde un lien
+# vers un appareil qui ne le reconnaît plus et le jumelage échoue en boucle.
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+# L'hôte NimBLE alloue en PSRAM : la DRAM interne est réservée aux piles des
+# tâches audio (voir audio_realtime_preallocate).
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
