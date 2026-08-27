@@ -5,6 +5,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include "esp_netif_ip_addr.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -93,6 +94,33 @@ const char *pogdev_fw_version(void);
  * and would find some of them.
  */
 esp_err_t pogdev_forget(void);
+
+/* Relève les identifiants avec le secret de réclamation déjà en NVS, auprès du
+ * serveur que la découverte connaît MAINTENANT.
+ *
+ * C'est la réponse aux CONNACK « identifiants refusés » qui persistent : le
+ * serveur tranche, jamais le CONNACK seul — un courtier qui redémarre refuse
+ * aussi pendant que ses comptes se reprovisionnent, alors que l'oubli est
+ * irréversible sans un humain. Trois issues côté pog Home : 404 = vraiment
+ * oublié, « pending » = demande de ré-adoption posée et visible dans
+ * l'inventaire, « adopted » = identifiants neufs écrits en NVS.
+ *
+ * Rend true seulement quand des identifiants neufs ont été enregistrés ;
+ * l'appelant relance alors le client MQTT. Fait du HTTP : jamais depuis un
+ * handler d'événement. */
+bool pogdev_enrol_recollect(void);
+
+/* Suit un serveur qui a déménagé : réécrit l'hôte et le port MQTT en NVS quand
+ * ils diffèrent de ce que la découverte vient de résoudre.
+ *
+ * L'adresse était gelée à la relève des identifiants et plus jamais relue :
+ * quand pog Home est passé sur le LAN le 26 août 2026, chaque enceinte a
+ * continué de frapper à l'ancienne adresse — reprise depuis par une autre
+ * machine — jusqu'au fer à souder. Les lampes et capteurs POG suivent le
+ * serveur ; ce composant doit le faire aussi, sans reflash.
+ *
+ * Rend true seulement quand quelque chose a changé et a été persisté. */
+bool pogdev_enrol_update_host(const esp_ip4_addr_t *addr, uint16_t mqtt_port);
 
 #ifdef __cplusplus
 }

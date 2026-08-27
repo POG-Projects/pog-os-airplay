@@ -462,6 +462,61 @@ esp_err_t pogdev_forget(void) {
   return err;
 }
 
+bool pogdev_enrol_recollect(void) {
+  pogdev_server_t srv;
+  if (s_lock == NULL || !pogdev_discovery_get(&srv)) {
+    return false;
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  bool pret = !s_forgetting && s_claim_secret[0] != '\0';
+  xSemaphoreGive(s_lock);
+  if (!pret) {
+    /* Sans secret il n'y a rien à prouver au serveur : c'est l'annonce
+     * neuve qui reprendra, au prochain démarrage ou via pogdev_forget. */
+    return false;
+  }
+  if (s_hw_id[0] == '\0') {
+    build_hw_id();
+  }
+  return collect(&srv);
+}
+
+bool pogdev_enrol_update_host(const esp_ip4_addr_t *addr, uint16_t mqtt_port) {
+  if (addr == NULL || s_lock == NULL) {
+    return false;
+  }
+  char hote[sizeof(s_creds.mqtt_host)];
+  snprintf(hote, sizeof(hote), IPSTR, IP2STR(addr));
+  if (mqtt_port == 0) {
+    mqtt_port = 1883;
+  }
+
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_have_creds || s_forgetting ||
+      (strcmp(s_creds.mqtt_host, hote) == 0 &&
+       s_creds.mqtt_port == mqtt_port)) {
+    xSemaphoreGive(s_lock);
+    return false;
+  }
+  nvs_handle_t h;
+  esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+  if (err == ESP_OK) {
+    if ((err = nvs_set_str(h, NVS_KEY_MQTT_HOST, hote)) == ESP_OK &&
+        (err = nvs_set_u16(h, NVS_KEY_MQTT_PORT, mqtt_port)) == ESP_OK) {
+      err = nvs_commit(h);
+    }
+    nvs_close(h);
+  }
+  if (err == ESP_OK) {
+    ESP_LOGW(TAG, "pog Home a déménagé : broker %s:%u -> %s:%u",
+             s_creds.mqtt_host, s_creds.mqtt_port, hote, mqtt_port);
+    strlcpy(s_creds.mqtt_host, hote, sizeof(s_creds.mqtt_host));
+    s_creds.mqtt_port = mqtt_port;
+  }
+  xSemaphoreGive(s_lock);
+  return err == ESP_OK;
+}
+
 const char *pogdev_fw_version(void) {
   /* Le descripteur vit dans la flash mappée de l'image en cours : la chaîne
    * reste valable pour toute la durée d'exécution, donc pas de copie. */
