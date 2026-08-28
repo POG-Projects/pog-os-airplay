@@ -19,6 +19,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "pogdev";
@@ -29,6 +30,14 @@ static const char *TAG = "pogdev";
 #define NVS_KEY_MQTT_PW   "mqtt_pw"
 #define NVS_KEY_MQTT_HOST "mqtt_host"
 #define NVS_KEY_MQTT_PORT "mqtt_port"
+#define NVS_KEY_PROV_CHAL "prov_chal"
+#define NVS_KEY_PROV_JWS  "prov_jws"
+
+/* Bornes du lien BLE : un challenge de 32 octets en base64url, une assertion
+ * JWS compacte. Les mêmes que côté pog Console et pog Home — une preuve plus
+ * grande est déjà invalide, autant ne pas la stocker. */
+#define PROV_CHAL_MAX 64
+#define PROV_JWS_MAX  3072
 
 /* Cadence de relève de pog-docs §3.3 : celui qui installe n'est pas forcément
  * celui qui clique, donc on reste attentif au début puis on s'espace, sans
@@ -160,6 +169,98 @@ static esp_err_t ensure_claim_secret(void) {
   return err;
 }
 
+/* ---- preuve d'onboarding (BLE) ---- */
+
+esp_err_t pogdev_provisioning_store(const char *challenge,
+                                    const char *assertion) {
+  if (challenge == NULL || assertion == NULL || challenge[0] == '\0' ||
+      assertion[0] == '\0' || strlen(challenge) > PROV_CHAL_MAX ||
+      strlen(assertion) > PROV_JWS_MAX) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  esp_err_t err = ensure_state_lock();
+  if (err != ESP_OK) {
+    return err;
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (s_forgetting) {
+    xSemaphoreGive(s_lock);
+    return ESP_ERR_INVALID_STATE;
+  }
+  nvs_handle_t h;
+  err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+  if (err == ESP_OK) {
+    if ((err = nvs_set_str(h, NVS_KEY_PROV_CHAL, challenge)) == ESP_OK &&
+        (err = nvs_set_str(h, NVS_KEY_PROV_JWS, assertion)) == ESP_OK) {
+      err = nvs_commit(h);
+    }
+    nvs_close(h);
+  }
+  xSemaphoreGive(s_lock);
+  return err;
+}
+
+esp_err_t pogdev_provisioning_clear(void) {
+  esp_err_t err = ensure_state_lock();
+  if (err != ESP_OK) {
+    return err;
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  nvs_handle_t h;
+  err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    /* Jamais de preuve déposée : rien à oublier n'est pas un échec. */
+    err = ESP_OK;
+  } else if (err == ESP_OK) {
+    esp_err_t e1 = nvs_erase_key(h, NVS_KEY_PROV_CHAL);
+    esp_err_t e2 = nvs_erase_key(h, NVS_KEY_PROV_JWS);
+    if (e1 == ESP_ERR_NVS_NOT_FOUND) {
+      e1 = ESP_OK;
+    }
+    if (e2 == ESP_ERR_NVS_NOT_FOUND) {
+      e2 = ESP_OK;
+    }
+    err = e1 != ESP_OK ? e1 : e2;
+    if (err == ESP_OK) {
+      err = nvs_commit(h);
+    }
+    nvs_close(h);
+  }
+  xSemaphoreGive(s_lock);
+  return err;
+}
+
+/* Relève la preuve pour une annonce. L'assertion est allouée sur le tas (elle
+ * approche 3 Ko : trop pour une pile de tâche, inutile en statique puisqu'elle
+ * ne sert qu'à l'annonce) ; l'appelant la libère. */
+static bool load_provisioning_proof(char *challenge, size_t challenge_cap,
+                                    char **assertion_out) {
+  *assertion_out = NULL;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  nvs_handle_t h;
+  if (s_forgetting || nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+    xSemaphoreGive(s_lock);
+    return false;
+  }
+  bool ok = false;
+  size_t len = 0;
+  if (nvs_get_str_into(h, NVS_KEY_PROV_CHAL, challenge, challenge_cap) ==
+          ESP_OK &&
+      nvs_get_str(h, NVS_KEY_PROV_JWS, NULL, &len) == ESP_OK && len > 0 &&
+      len <= PROV_JWS_MAX + 1) {
+    char *jws = malloc(len);
+    if (jws != NULL && nvs_get_str(h, NVS_KEY_PROV_JWS, jws, &len) == ESP_OK) {
+      *assertion_out = jws;
+      ok = true;
+    } else {
+      free(jws);
+    }
+  }
+  nvs_close(h);
+  xSemaphoreGive(s_lock);
+  return ok;
+}
+
 static esp_err_t store_creds(const pogdev_creds_t *c) {
   xSemaphoreTake(s_lock, portMAX_DELAY);
   if (s_forgetting) {
@@ -236,6 +337,27 @@ static void announce(const pogdev_server_t *srv) {
   cJSON_AddStringToObject(body, "name",
                           s_device_name[0] ? s_device_name : "Enceinte POG");
   cJSON_AddStringToObject(body, "claim_secret", s_claim_secret);
+
+  /* Une preuve d'onboarding BLE en attente accompagne l'annonce : pog Home
+   * adopte alors sans file d'attente, et c'est ce que pog Console attend en
+   * scrutant la liste des appareils.
+   *
+   * La classe n'est envoyée QU'avec la preuve : un pog Home d'avant
+   * `airplay_speaker` refuse en 400 toute annonce portant une classe qu'il ne
+   * connaît pas, ce qui interdirait même l'adoption manuelle. La preuve, elle,
+   * ne peut exister que si pog Auth est déjà à jour — les deux voyagent donc
+   * ensemble, et l'annonce ordinaire reste celle que tout foyer comprend. */
+  char proof_challenge[PROV_CHAL_MAX + 1] = {0};
+  char *proof_assertion = NULL;
+  bool with_proof = load_provisioning_proof(
+      proof_challenge, sizeof(proof_challenge), &proof_assertion);
+  if (with_proof) {
+    cJSON_AddStringToObject(body, "device_class", POGDEV_DEVICE_CLASS);
+    cJSON_AddStringToObject(body, "challenge", proof_challenge);
+    cJSON_AddStringToObject(body, "provisioning_assertion", proof_assertion);
+  }
+  free(proof_assertion);
+
   char *json = cJSON_PrintUnformatted(body);
   cJSON_Delete(body);
   if (json == NULL) {
@@ -253,6 +375,17 @@ static void announce(const pogdev_server_t *srv) {
     ESP_LOGI(TAG, "annoncé à pog Home, en attente d'adoption (%s)", s_hw_id);
   } else {
     ESP_LOGW(TAG, "annonce refusée (HTTP %d)", status);
+  }
+
+  /* Preuve refusée : périmée (elle expire en deux minutes), déjà consommée,
+   * ou signée pour un autre foyer. La garder condamnerait l'appareil à se
+   * faire refuser pour toujours — on la jette et l'annonce suivante repasse
+   * par la file d'attente ordinaire, où un humain peut toujours adopter. */
+  if (with_proof &&
+      (status == 401 || status == 403 || status == 409 || status == 503)) {
+    ESP_LOGW(TAG, "preuve pog Auth écartée (HTTP %d) — adoption manuelle",
+             status);
+    pogdev_provisioning_clear();
   }
 }
 
@@ -367,6 +500,10 @@ static void enrol_task(void *arg) {
      * serveur (elle expire au bout de 30 min) et met à jour « vu il y a … ». */
     announce(&srv);
     if (collect(&srv)) {
+      /* La preuve d'onboarding a rempli son office (le serveur a déjà brûlé
+       * son identifiant unique) : la garder ne servirait qu'à être refusée
+       * si elle repartait un jour dans une annonce. */
+      pogdev_provisioning_clear();
       /* Les identifiants sont en NVS à ce point (collect les écrit avant de
        * rendre true), donc le bus a tout ce qu'il lui faut. Sans ceci il
        * attendait le prochain démarrage, et l'appareil s'affichait adopté et

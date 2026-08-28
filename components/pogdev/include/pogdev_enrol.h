@@ -17,6 +17,14 @@ extern "C" {
  * pour que les deux ne puissent pas diverger. */
 #define POGDEV_MODEL "POG AirPlay (XIAO S3)"
 
+/* Classe d'appareil, annoncée à l'adoption ET portée par le lien d'onboarding
+ * BLE. pog Auth signe l'assertion sur {hw_id, challenge, device_class, model}
+ * et pog Home vérifie l'égalité stricte avec l'annonce : une divergence entre
+ * les deux usages rend toute adoption automatique impossible, d'où la
+ * définition unique. La valeur doit exister dans la liste fermée de
+ * pog-srv-auth (device_provisioning.go) et de poghome (enrolment.go). */
+#define POGDEV_DEVICE_CLASS "airplay_speaker"
+
 /* Ce qu'on reçoit à l'adoption, une seule fois. */
 typedef struct {
   char device_id[48]; /* identifiant attribué par pog Home */
@@ -58,6 +66,22 @@ bool pogdev_enrol_get(pogdev_creds_t *out);
 
 /* Identifiant matériel stable, celui que l'humain compare à l'écran. */
 const char *pogdev_hw_id(void);
+
+/* Dépose la preuve d'onboarding reçue en BLE : le challenge annoncé par
+ * l'appareil et l'assertion signée par pog Auth. Elle est écrite en NVS parce
+ * que l'appareil redémarre entre sa réception et son usage — c'est la
+ * prochaine annonce, après jonction du Wi-Fi, qui la présentera à pog Home
+ * pour être adopté sans passer par la file d'attente. Consommée (effacée) à
+ * l'adoption, ou abandonnée si le serveur la refuse : l'assertion expire en
+ * deux minutes, et une preuve périmée ne doit pas condamner l'appareil à
+ * réannoncer un refus pour toujours. */
+esp_err_t pogdev_provisioning_store(const char *challenge,
+                                    const char *assertion);
+
+/* Oublie la preuve sans toucher au reste de l'enrôlement. Utilisé quand la
+ * configuration Wi-Fi échoue après le dépôt : une preuve orpheline serait
+ * présentée avec un état incohérent. */
+esp_err_t pogdev_provisioning_clear(void);
 
 /* Version de firmware annoncée à l'enrôlement et dans le `hello` ; c'est elle
  * que pog Home enregistre dans `devices.sw_version`.
