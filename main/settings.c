@@ -32,6 +32,7 @@ static const char *TAG = "settings";
 #define NVS_KEY_ARGB_BR       "argb_br"
 #define NVS_KEY_ARGB_COLOR    "argb_color"
 #define NVS_KEY_ARGB_SPEED    "argb_speed"
+#define NVS_KEY_ARGB_MUSIC    "argb_music"
 #define NVS_KEY_BTN_PP        "btn_pp"
 #define NVS_KEY_BTN_VU        "btn_vu"
 #define NVS_KEY_BTN_VD        "btn_vd"
@@ -77,6 +78,7 @@ static const char *TAG = "settings";
 #define ARGB_DEFAULT_BR    128
 #define ARGB_DEFAULT_COLOR 0x2080FFu // pleasant blue (0xRRGGBB)
 #define ARGB_DEFAULT_SPEED 5         // 1..10 animation speed
+#define ARGB_DEFAULT_MUSIC 0         // musical override is explicit opt-in
 
 // Button GPIO defaults = Kconfig values (so behaviour is unchanged
 // until the user overrides them via the API).
@@ -757,7 +759,7 @@ esp_err_t settings_set_matrix(bool en, int fx, int br, int din, int clk,
 }
 
 esp_err_t settings_get_argb(bool *en, int *gpio, int *count, int *fx, int *br,
-                            uint32_t *color, int *speed) {
+                            uint32_t *color, int *speed, bool *music) {
   uint8_t v_en = ARGB_DEFAULT_EN;
   int8_t v_gpio = ARGB_DEFAULT_GPIO;
   uint16_t v_count = ARGB_DEFAULT_COUNT;
@@ -765,6 +767,7 @@ esp_err_t settings_get_argb(bool *en, int *gpio, int *count, int *fx, int *br,
   uint8_t v_br = ARGB_DEFAULT_BR;
   uint32_t v_color = ARGB_DEFAULT_COLOR;
   uint8_t v_speed = ARGB_DEFAULT_SPEED;
+  uint8_t v_music = ARGB_DEFAULT_MUSIC;
 
   nvs_handle_t nvs;
   esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
@@ -794,6 +797,9 @@ esp_err_t settings_get_argb(bool *en, int *gpio, int *count, int *fx, int *br,
     if (nvs_get_u8(nvs, NVS_KEY_ARGB_SPEED, &u8) == ESP_OK) {
       v_speed = u8;
     }
+    if (nvs_get_u8(nvs, NVS_KEY_ARGB_MUSIC, &u8) == ESP_OK) {
+      v_music = u8;
+    }
     nvs_close(nvs);
   }
 
@@ -818,11 +824,14 @@ esp_err_t settings_get_argb(bool *en, int *gpio, int *count, int *fx, int *br,
   if (speed) {
     *speed = (int)v_speed;
   }
+  if (music) {
+    *music = (v_music != 0);
+  }
   return ESP_OK;
 }
 
 esp_err_t settings_set_argb(bool en, int gpio, int count, int fx, int br,
-                            uint32_t color, int speed) {
+                            uint32_t color, int speed, bool music) {
   // Validate ranges (effect 0-11, brightness 0-255, gpio -1..48, count 1..300,
   // speed 1..10; colour is any 0xRRGGBB).
   if (fx < 0 || fx > 11) {
@@ -868,6 +877,9 @@ esp_err_t settings_set_argb(bool en, int gpio, int count, int fx, int br,
     err = nvs_set_u8(nvs, NVS_KEY_ARGB_SPEED, (uint8_t)speed);
   }
   if (err == ESP_OK) {
+    err = nvs_set_u8(nvs, NVS_KEY_ARGB_MUSIC, music ? 1 : 0);
+  }
+  if (err == ESP_OK) {
     err = nvs_commit(nvs);
   }
   nvs_close(nvs);
@@ -875,8 +887,10 @@ esp_err_t settings_set_argb(bool en, int gpio, int count, int fx, int br,
   if (err == ESP_OK) {
     ESP_LOGI(
         TAG,
-        "Saved argb: en=%d gpio=%d count=%d fx=%d br=%d color=%06lX speed=%d",
-        en, gpio, count, fx, br, (unsigned long)(color & 0xFFFFFFu), speed);
+        "Saved argb: en=%d gpio=%d count=%d fx=%d br=%d color=%06lX speed=%d "
+        "music=%d",
+        en, gpio, count, fx, br, (unsigned long)(color & 0xFFFFFFu), speed,
+        music);
   } else {
     ESP_LOGE(TAG, "Failed to save argb config: %s", esp_err_to_name(err));
   }

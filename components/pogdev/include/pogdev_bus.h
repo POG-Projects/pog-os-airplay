@@ -12,6 +12,8 @@
 
 #include "cJSON.h"
 #include "esp_err.h"
+#include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +28,7 @@ typedef void (*pogdev_state_fn)(cJSON *state);
 /* Une commande reçue. `params` peut être NULL. */
 typedef void (*pogdev_cmd_handler)(const char *key, const char *name,
                                    const cJSON *params);
+typedef void (*pogdev_effect_frame_handler)(const char *json, size_t length);
 
 typedef enum {
   POGDEV_BUS_NOT_STARTED = 0,
@@ -47,6 +50,13 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
  * chemin — l'interface web, un bouton physique, AirPlay — sinon pog Home
  * n'apprendrait le changement qu'au prochain tick périodique. */
 void pogdev_bus_notify(void);
+
+/* Active l'extension seulement sur une variante qui possède réellement une
+ * sortie lumineuse adressable. Doit être appelé avant pogdev_bus_start(). */
+void pogdev_bus_enable_effect_sync(pogdev_effect_frame_handler handler);
+esp_err_t pogdev_bus_effect_sync_join(const char *group_id);
+bool pogdev_bus_effect_sync_leave(const char *group_id);
+void pogdev_bus_effect_sync_cancel(void);
 
 /* État synthétique destiné aux diagnostics locaux et à l'interface web. */
 pogdev_bus_status_t pogdev_bus_get_status(void);

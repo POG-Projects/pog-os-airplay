@@ -44,6 +44,8 @@ set( SRC_FILES
     "led.c"
     "led_matrix.c"
     "led_argb.c"
+    "led_argb_policy.c"
+    "effect_sync.c"
     "audio/eq_events.c"
     "audio/eq_dsp.c"
     "audio/audio_limiter.c"

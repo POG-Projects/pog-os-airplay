@@ -20,7 +20,10 @@ typedef struct {
  * and led_argb_feed() returns immediately — zero cost for devices that do not
  * opt in.
  *
- * User-configurable: data GPIO, LED count, brightness, effect. Effects
+ * User-configurable: data GPIO, LED count, brightness, colour and musical
+ * effect. While linked to POG Home, the strip behaves as a regular lamp and
+ * the musical effect overrides it only when explicitly enabled and audible
+ * audio is present. Effects
  * (argb_fx): 0 = VU-metre, 1 = Spectre, 2 = Pulsation basses, 3 = Arc-en-ciel
  * (ambient), 4 = Veilleuse (ambient).
  */
@@ -51,3 +54,15 @@ void led_argb_feed(const int16_t *pcm, size_t stereo_samples);
 
 /** Snapshot the audio values currently consumed by reactive effects. */
 void led_argb_get_audio_stats(led_argb_audio_stats_t *stats);
+
+bool led_argb_effect_sync_join(const char *group_id,
+                               const char *leader_entity_id,
+                               int presentation_delay_ms,
+                               int calibration_offset_ms,
+                               const char *visualizer);
+bool led_argb_effect_sync_leave(const char *group_id);
+void led_argb_effect_sync_cancel(void);
+bool led_argb_effect_sync_frame(uint32_t seq, uint64_t mono_ms,
+                                uint64_t present_at_ms, uint16_t lead_ms,
+                                float level, float bass, float treble,
+                                uint32_t received_ms);

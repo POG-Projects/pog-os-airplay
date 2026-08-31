@@ -1202,9 +1202,10 @@ static esp_err_t matrix_post_handler(httpd_req_t *req) {
 
 static esp_err_t argb_get_handler(httpd_req_t *req) {
   bool en = false;
+  bool music = false;
   int gpio = -1, count = 30, fx = 0, br = 128, speed = 5;
   uint32_t color = 0x2080FF;
-  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed);
+  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed, &music);
 
   cJSON *json = cJSON_CreateObject();
   cJSON_AddBoolToObject(json, "enabled", en);
@@ -1214,6 +1215,7 @@ static esp_err_t argb_get_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(json, "brightness", br);
   cJSON_AddNumberToObject(json, "color", (double)color);
   cJSON_AddNumberToObject(json, "speed", speed);
+  cJSON_AddBoolToObject(json, "music_mode", music);
 
   char *json_str = cJSON_Print(json);
   if (!json_str) {
@@ -1252,9 +1254,10 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
 
   // Start from the current config so partial bodies keep existing values.
   bool en = false;
+  bool music = false;
   int gpio = -1, count = 30, fx = 0, br = 128, speed = 5;
   uint32_t color = 0x2080FF;
-  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed);
+  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed, &music);
 
   cJSON *j_en = cJSON_GetObjectItem(json, "enabled");
   cJSON *j_gpio = cJSON_GetObjectItem(json, "gpio");
@@ -1263,6 +1266,7 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
   cJSON *j_br = cJSON_GetObjectItem(json, "brightness");
   cJSON *j_color = cJSON_GetObjectItem(json, "color");
   cJSON *j_speed = cJSON_GetObjectItem(json, "speed");
+  cJSON *j_music = cJSON_GetObjectItem(json, "music_mode");
 
   if (j_en && cJSON_IsBool(j_en)) {
     en = cJSON_IsTrue(j_en);
@@ -1285,6 +1289,9 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
   if (j_speed && cJSON_IsNumber(j_speed)) {
     speed = (int)cJSON_GetNumberValue(j_speed);
   }
+  if (j_music && cJSON_IsBool(j_music)) {
+    music = cJSON_IsTrue(j_music);
+  }
 
   cJSON *response = cJSON_CreateObject();
 
@@ -1295,9 +1302,11 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(response, "success", false);
     cJSON_AddStringToObject(response, "error", "Invalid range");
   } else {
-    esp_err_t err = settings_set_argb(en, gpio, count, fx, br, color, speed);
+    esp_err_t err =
+        settings_set_argb(en, gpio, count, fx, br, color, speed, music);
     if (err == ESP_OK) {
       led_argb_reconfigure(); // apply live
+      pogdev_bus_notify();
       cJSON_AddBoolToObject(response, "success", true);
     } else {
       cJSON_AddBoolToObject(response, "success", false);
