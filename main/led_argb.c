@@ -173,8 +173,7 @@ static void fx_shared(const effect_sync_frame_t *frame,
     effect_sync_pixel_t pixel =
         effect_sync_visualizer_pixel(visualizer, position, frame);
     uint8_t r, g, b;
-    hsv2rgb((uint8_t)(pixel.hue * 255.0f),
-            (uint8_t)(pixel.saturation * 255.0f),
+    hsv2rgb((uint8_t)(pixel.hue * 255.0f), (uint8_t)(pixel.saturation * 255.0f),
             (uint8_t)(pixel.value * 255.0f), &r, &g, &b);
     fb_set(i, r, g, b);
   }
@@ -479,14 +478,15 @@ static void render_task(void *arg) {
     effect_visualizer_t shared_visualizer = EFFECT_VISUALIZER_SPECTRUM;
     struct timeval wall = {0};
     gettimeofday(&wall, NULL);
-    uint64_t utc_ms = wall.tv_sec > 1700000000
-                          ? (uint64_t)wall.tv_sec * 1000ULL + wall.tv_usec / 1000
-                          : 0;
+    uint64_t utc_ms =
+        wall.tv_sec > 1700000000
+            ? (uint64_t)wall.tv_sec * 1000ULL + wall.tv_usec / 1000
+            : 0;
     bool shared_active;
     portENTER_CRITICAL(&s_effect_sync_mux);
-    shared_active = effect_sync_sample(
-        &s_effect_sync, (uint32_t)(esp_timer_get_time() / 1000), utc_ms,
-        &shared);
+    shared_active = effect_sync_sample(&s_effect_sync,
+                                       (uint32_t)(esp_timer_get_time() / 1000),
+                                       utc_ms, &shared);
     shared_visualizer = s_effect_sync.visualizer;
     portEXIT_CRITICAL(&s_effect_sync_mux);
     if (shared_active) {
@@ -499,12 +499,10 @@ static void render_task(void *arg) {
 
     memset(s_fb, 0, (size_t)s_count * 3);
     int64_t now_us = esp_timer_get_time();
-    const bool audio_reactive = s_frame_config.fx == 0 ||
-                                s_frame_config.fx == 1 ||
-                                s_frame_config.fx == 2 ||
-                                s_frame_config.fx == 5 ||
-                                s_frame_config.fx == 6 ||
-                                s_frame_config.fx == 11;
+    const bool audio_reactive =
+        s_frame_config.fx == 0 || s_frame_config.fx == 1 ||
+        s_frame_config.fx == 2 || s_frame_config.fx == 5 ||
+        s_frame_config.fx == 6 || s_frame_config.fx == 11;
     bool effect_active = led_argb_effect_should_render(
         pogdev_bus_get_status() == POGDEV_BUS_CONNECTED, s_frame_config.music,
         audio_reactive, a.sound_seen, a.last_sound_us, now_us);
@@ -836,9 +834,9 @@ bool led_argb_effect_sync_join(const char *group_id,
                                const char *visualizer) {
   bool ok;
   portENTER_CRITICAL(&s_effect_sync_mux);
-  ok = effect_sync_join(&s_effect_sync, group_id, "follower",
-                        leader_entity_id, presentation_delay_ms,
-                        calibration_offset_ms, visualizer);
+  ok = effect_sync_join(&s_effect_sync, group_id, "follower", leader_entity_id,
+                        presentation_delay_ms, calibration_offset_ms,
+                        visualizer);
   portEXIT_CRITICAL(&s_effect_sync_mux);
   return ok;
 }

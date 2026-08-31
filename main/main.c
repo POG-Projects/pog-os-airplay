@@ -72,7 +72,8 @@ static void start_wall_clock(void) {
     s_wall_clock_started = true;
     ESP_LOGI(TAG, "SNTP wall clock started for effect deadlines");
   } else {
-    ESP_LOGW(TAG, "SNTP wall clock could not start; relative timing remains active");
+    ESP_LOGW(TAG,
+             "SNTP wall clock could not start; relative timing remains active");
   }
 }
 

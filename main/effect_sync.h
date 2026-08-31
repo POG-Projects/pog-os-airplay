@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define EFFECT_SYNC_CAPACITY 8
+#define EFFECT_SYNC_CAPACITY   8
 #define EFFECT_SYNC_TIMEOUT_MS 500
 
 typedef enum {
@@ -48,9 +48,9 @@ bool effect_sync_uuid_is_canonical(const char *value);
 bool effect_sync_visualizer_from_name(const char *value,
                                       effect_visualizer_t *out);
 float effect_sync_pixel_position(size_t index, size_t count);
-effect_sync_pixel_t effect_sync_visualizer_pixel(
-    effect_visualizer_t visualizer, float position,
-    const effect_sync_frame_t *frame);
+effect_sync_pixel_t
+effect_sync_visualizer_pixel(effect_visualizer_t visualizer, float position,
+                             const effect_sync_frame_t *frame);
 bool effect_sync_join(effect_sync_t *state, const char *group_id,
                       const char *role, const char *leader_entity_id,
                       int presentation_delay_ms, int calibration_offset_ms,

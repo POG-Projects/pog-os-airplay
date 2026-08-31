@@ -124,10 +124,10 @@ static const option_t ARGB_EFFECTS[] = {
  * audio de l'enceinte. Une ambiance multi-appareils prend l'intersection des
  * listes annoncées ; une enceinte seule garde donc toute sa richesse. */
 static const char *SYNC_EFFECTS[] = {
-    "Uni",          "Arc-en-ciel",       "Respiration",
-    "Comète",       "Scintillement",     "Veilleuse",
-    "VU-mètre",     "Spectre",           "Pulsation basses",
-    "VU centre",    "Strobe basses",     "Niveau couleur",
+    "Uni",       "Arc-en-ciel",   "Respiration",
+    "Comète",    "Scintillement", "Veilleuse",
+    "VU-mètre",  "Spectre",       "Pulsation basses",
+    "VU centre", "Strobe basses", "Niveau couleur",
 };
 
 static void add_light_effect_action(cJSON *lamp) {
@@ -152,12 +152,9 @@ static void add_light_effect_action(cJSON *lamp) {
     const char *name;
     double min;
     double max;
-  } numbers[] = {{"speed", 0, 100},
-                 {"brightness", 0, 100},
-                 {"primary_hue", 0, 360},
-                 {"primary_saturation", 0, 100},
-                 {"secondary_hue", 0, 360},
-                 {"secondary_saturation", 0, 100}};
+  } numbers[] = {{"speed", 0, 100},         {"brightness", 0, 100},
+                 {"primary_hue", 0, 360},   {"primary_saturation", 0, 100},
+                 {"secondary_hue", 0, 360}, {"secondary_saturation", 0, 100}};
   for (size_t i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++) {
     cJSON *param = cJSON_CreateObject();
     cJSON_AddStringToObject(param, "name", numbers[i].name);
@@ -168,7 +165,8 @@ static void add_light_effect_action(cJSON *lamp) {
     cJSON_AddItemToArray(params, param);
   }
   cJSON_AddItemToArray(commands, command);
-  if (!argb_follow_capable()) return;
+  if (!argb_follow_capable())
+    return;
 
   cJSON *join = cJSON_CreateObject();
   cJSON_AddStringToObject(join, "name", "join_effect_group");
@@ -176,13 +174,14 @@ static void add_light_effect_action(cJSON *lamp) {
   cJSON_AddBoolToObject(join, "sensitive", false);
   cJSON_AddBoolToObject(join, "reversible", true);
   cJSON *join_params = cJSON_AddArrayToObject(join, "params");
-#define ADD_STRING_PARAM(name_value) do { \
-  cJSON *p = cJSON_CreateObject(); \
-  cJSON_AddStringToObject(p, "name", name_value); \
-  cJSON_AddStringToObject(p, "kind", "string"); \
-  cJSON_AddBoolToObject(p, "required", true); \
-  cJSON_AddItemToArray(join_params, p); \
-} while (0)
+#define ADD_STRING_PARAM(name_value)                \
+  do {                                              \
+    cJSON *p = cJSON_CreateObject();                \
+    cJSON_AddStringToObject(p, "name", name_value); \
+    cJSON_AddStringToObject(p, "kind", "string");   \
+    cJSON_AddBoolToObject(p, "required", true);     \
+    cJSON_AddItemToArray(join_params, p);           \
+  } while (0)
   ADD_STRING_PARAM("group_id");
   cJSON *role = cJSON_CreateObject();
   cJSON_AddStringToObject(role, "name", "role");
@@ -194,7 +193,11 @@ static void add_light_effect_action(cJSON *lamp) {
   cJSON_AddItemToArray(join_params, role);
   ADD_STRING_PARAM("leader_entity_id");
 #undef ADD_STRING_PARAM
-  const struct { const char *name; int min; int max; } timing[] = {
+  const struct {
+    const char *name;
+    int min;
+    int max;
+  } timing[] = {
       {"presentation_delay_ms", 0, 500},
       {"calibration_offset_ms", -100, 100},
   };
@@ -213,11 +216,10 @@ static void add_light_effect_action(cJSON *lamp) {
   cJSON_AddBoolToObject(visualizer, "required", false);
   cJSON_AddStringToObject(visualizer, "default", "spectrum");
   cJSON *visualizers = cJSON_AddArrayToObject(visualizer, "enum");
-  static const char *visualizer_names[] = {
-      "spectrum", "vu_meter", "bass_pulse", "rainbow"};
+  static const char *visualizer_names[] = {"spectrum", "vu_meter", "bass_pulse",
+                                           "rainbow"};
   for (size_t i = 0; i < 4; ++i)
-    cJSON_AddItemToArray(visualizers,
-                         cJSON_CreateString(visualizer_names[i]));
+    cJSON_AddItemToArray(visualizers, cJSON_CreateString(visualizer_names[i]));
   cJSON_AddItemToArray(join_params, visualizer);
   cJSON_AddItemToArray(commands, join);
 
@@ -562,14 +564,18 @@ static void set_argb_color(double hue, double saturation) {
 }
 
 static int sync_effect_index(const char *name) {
-  static const struct { const char *name; int index; } effects[] = {
-      {"Uni", 7},          {"Arc-en-ciel", 3},       {"Respiration", 8},
-      {"Comète", 9},       {"Scintillement", 10},    {"Veilleuse", 4},
-      {"VU-mètre", 0},     {"Spectre", 1},           {"Pulsation basses", 2},
-      {"VU centre", 5},    {"Strobe basses", 6},     {"Niveau couleur", 11},
+  static const struct {
+    const char *name;
+    int index;
+  } effects[] = {
+      {"Uni", 7},       {"Arc-en-ciel", 3},    {"Respiration", 8},
+      {"Comète", 9},    {"Scintillement", 10}, {"Veilleuse", 4},
+      {"VU-mètre", 0},  {"Spectre", 1},        {"Pulsation basses", 2},
+      {"VU centre", 5}, {"Strobe basses", 6},  {"Niveau couleur", 11},
   };
   for (size_t i = 0; i < sizeof(effects) / sizeof(effects[0]); i++) {
-    if (name != NULL && strcmp(name, effects[i].name) == 0) return effects[i].index;
+    if (name != NULL && strcmp(name, effects[i].name) == 0)
+      return effects[i].index;
   }
   return -1;
 }
@@ -595,10 +601,14 @@ static bool set_argb_effect(const cJSON *params) {
   (void)current_brightness;
   (void)current_speed;
   color = hs_to_rgb(hue, saturation);
-  if (speed < 0) speed = 0;
-  if (speed > 100) speed = 100;
-  if (brightness < 0) brightness = 0;
-  if (brightness > 100) brightness = 100;
+  if (speed < 0)
+    speed = 0;
+  if (speed > 100)
+    speed = 100;
+  if (brightness < 0)
+    brightness = 0;
+  if (brightness > 100)
+    brightness = 100;
   int speed10 = (int)lround(speed * 9.0 / 100.0) + 1;
   int brightness255 = pct_to_255(brightness);
   if (settings_set_argb(true, gpio, count, effect, brightness255, color,
@@ -670,16 +680,15 @@ static void on_command(const char *key, const char *name, const cJSON *params) {
           !effect_sync_visualizer_from_name(visualizer, &parsed_visualizer) ||
           !num_param(params, "presentation_delay_ms", &delay) ||
           !num_param(params, "calibration_offset_ms", &calibration) ||
-          delay < 0 || delay > 500 || calibration < -100 ||
-          calibration > 100) {
+          delay < 0 || delay > 500 || calibration < -100 || calibration > 100) {
         ESP_LOGW(TAG, "join_effect_group invalide");
       } else {
         bool enabled = false;
         settings_get_argb(&enabled, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-        if (!enabled) set_argb_field("enabled", true);
+        if (!enabled)
+          set_argb_field("enabled", true);
         if (pogdev_bus_effect_sync_join(group) == ESP_OK) {
-          led_argb_effect_sync_join(group, leader, (int)delay,
-                                    (int)calibration,
+          led_argb_effect_sync_join(group, leader, (int)delay, (int)calibration,
                                     visualizer ? visualizer : "spectrum");
         }
       }
@@ -760,7 +769,8 @@ static void on_command(const char *key, const char *name, const cJSON *params) {
 
 static void on_effect_frame(const char *json, size_t length) {
   cJSON *root = cJSON_ParseWithLength(json, length);
-  if (root == NULL) return;
+  if (root == NULL)
+    return;
   const cJSON *seq = cJSON_GetObjectItem(root, "seq");
   const cJSON *mono = cJSON_GetObjectItem(root, "mono_ms");
   const cJSON *lead = cJSON_GetObjectItem(root, "lead_ms");
@@ -787,6 +797,7 @@ esp_err_t pogdev_app_start(void) {
    * retard sur un tableau de bord qu'on regarde en direct. */
   web_server_set_nowplaying_observer(pogdev_bus_notify);
   s_argb_effect_capable = argb_follow_capable();
-  if (s_argb_effect_capable) pogdev_bus_enable_effect_sync(on_effect_frame);
+  if (s_argb_effect_capable)
+    pogdev_bus_enable_effect_sync(on_effect_frame);
   return pogdev_bus_start(describe, report, on_command);
 }
