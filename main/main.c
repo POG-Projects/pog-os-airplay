@@ -36,6 +36,11 @@
 #include "rtsp_events.h"
 #endif
 
+#ifdef CONFIG_BT_NIMBLE_ENABLED
+#include "ble_onboarding.h"
+#include "onboarding.h"
+#endif
+
 #include "iot_board.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
@@ -339,6 +344,20 @@ void app_main(void) {
   web_server_start(80);
   task_create_spiram(network_monitor_task, "net_mon", 4096, NULL, 5, NULL,
                      NULL);
+
+#ifdef CONFIG_BT_NIMBLE_ENABLED
+  // BLE onboarding: advertise the POG provisioning service so pog Console
+  // (AccessorySetupKit) can hand over Wi-Fi credentials and a pog Auth proof.
+  // Only while unprovisioned — once credentials exist the device reboots into
+  // normal operation and BLE stays off, giving its RAM back to audio.
+  if (!eth_available && onboarding_active()) {
+    esp_err_t ble_err = ble_onboarding_start();
+    if (ble_err != ESP_OK) {
+      ESP_LOGW(TAG, "BLE onboarding failed to start: %s",
+               esp_err_to_name(ble_err));
+    }
+  }
+#endif
 
   bool connected = eth_available || wifi_is_connected();
   if (connected) {
