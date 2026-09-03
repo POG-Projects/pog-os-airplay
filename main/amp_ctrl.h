@@ -1,4 +1,8 @@
 #pragma once
+#include <stdbool.h>
+
+/* Keep an optional amplifier awake while a voice turn owns the speaker. */
+void amp_ctrl_set_voice_active(bool active);
 
 /**
  * Amplifier mute / standby control via a single GPIO.

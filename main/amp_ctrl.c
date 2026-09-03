@@ -22,6 +22,7 @@ static bool g_is_active = false;
 // playback resumed after it was queued, and lets a live reconfigure re-arm
 // standby correctly.
 static volatile bool g_playing = false;
+static volatile bool g_voice = false;
 
 // Drive the GPIO to the amp-ACTIVE or amp-STANDBY level per the polarity.
 static void drive_amp(bool active) {
@@ -42,7 +43,7 @@ static void standby_timer_cb(void *arg) {
   // If playback resumed after this callback was already queued (a cancel/fire
   // race across the RTSP, timer and config tasks), do NOT mute — that would cut
   // live audio.
-  if (g_playing) {
+  if (g_playing || g_voice) {
     return;
   }
   // Idle timeout elapsed: mute the amp to kill hiss and save power.
@@ -56,7 +57,7 @@ static void cancel_standby_timer(void) {
 }
 
 static void start_standby_timer(void) {
-  if (g_gpio < 0 || g_standby_min <= 0 || !g_standby_timer) {
+  if (g_voice || g_gpio < 0 || g_standby_min <= 0 || !g_standby_timer) {
     return; // disabled, or "never auto-standby"
   }
   cancel_standby_timer();
@@ -175,4 +176,15 @@ void amp_ctrl_init(void) {
 
 void amp_ctrl_reconfigure(void) {
   apply_config();
+}
+
+void amp_ctrl_set_voice_active(bool active) {
+  if (g_voice == active)
+    return;
+  g_voice = active;
+  if (active) {
+    cancel_standby_timer();
+    drive_amp(true);
+  } else if (!g_playing)
+    start_standby_timer();
 }

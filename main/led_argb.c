@@ -1,6 +1,7 @@
 #include "led_argb.h"
 #include "led_argb_policy.h"
 #include "effect_sync.h"
+#include "pogvoice.h"
 
 #include "pogdev_bus.h"
 #include "settings.h"
@@ -452,6 +453,8 @@ static void strip_show(void) {
 static void render_task(void *arg) {
   (void)arg;
   int64_t next_us = esp_timer_get_time();
+  pogvoice_light_t previous_voice = POGVOICE_LIGHT_OFF;
+  int64_t voice_since_us = next_us;
 
   while (!s_task_stop) {
     argb_config_t config;
@@ -473,6 +476,30 @@ static void render_task(void *arg) {
     a.last_sound_us = s_audio.last_sound_us;
     a.sound_seen = s_audio.sound_seen;
     portEXIT_CRITICAL(&s_audio_mux);
+    float voice_level = a.level;
+
+    effect_sync_frame_t shared;
+    effect_visualizer_t shared_visualizer = EFFECT_VISUALIZER_SPECTRUM;
+    struct timeval wall = {0};
+    gettimeofday(&wall, NULL);
+    uint64_t utc_ms =
+        wall.tv_sec > 1700000000
+            ? (uint64_t)wall.tv_sec * 1000ULL + wall.tv_usec / 1000
+            : 0;
+    bool shared_active;
+    portENTER_CRITICAL(&s_effect_sync_mux);
+    shared_active = effect_sync_sample(&s_effect_sync,
+                                       (uint32_t)(esp_timer_get_time() / 1000),
+                                       utc_ms, &shared);
+    shared_visualizer = s_effect_sync.visualizer;
+    portEXIT_CRITICAL(&s_effect_sync_mux);
+    if (shared_active) {
+      a.level = shared.level;
+      a.bass = shared.bass;
+      a.treble = shared.treble;
+      a.sound_seen = true;
+      a.last_sound_us = esp_timer_get_time();
+    }
 
     effect_sync_frame_t shared;
     effect_visualizer_t shared_visualizer = EFFECT_VISUALIZER_SPECTRUM;
@@ -506,7 +533,23 @@ static void render_task(void *arg) {
     bool effect_active = led_argb_effect_should_render(
         pogdev_bus_get_status() == POGDEV_BUS_CONNECTED, s_frame_config.music,
         audio_reactive, a.sound_seen, a.last_sound_us, now_us);
-    if (shared_active) {
+    pogvoice_light_t voice = pogvoice_light_state();
+    if (voice != previous_voice) {
+      previous_voice = voice;
+      voice_since_us = now_us;
+    }
+    if (voice == POGVOICE_LIGHT_LISTENING) {
+      pogmic_status_t mic;
+      pogmic_get_status(&mic);
+      voice_level = mic.active ? (mic.rms_dbfs + 60.0f) / 40.0f : 0;
+    }
+    bool voice_active = pogvoice_feedback_render(
+        s_fb, (size_t)s_count, voice,
+        (uint32_t)((now_us - voice_since_us) / 1000), voice_level);
+    if (voice_active) {
+      /* Voice is a local, temporary overlay. Lamp configuration and incoming
+       * group effects continue updating underneath and resume immediately. */
+    } else if (shared_active) {
       fx_shared(&shared, shared_visualizer);
     } else if (!effect_active) {
       fx_solid();

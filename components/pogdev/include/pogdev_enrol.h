@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "esp_netif_ip_addr.h"
+#include "sdkconfig.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -15,7 +16,14 @@ extern "C" {
 
 /* Modèle annoncé à l'adoption et dans le descripteur. Une seule définition,
  * pour que les deux ne puissent pas diverger. */
+#if defined(CONFIG_BOARD_WROVER_E) && CONFIG_BOARD_WROVER_E
+#define POGDEV_MODEL "POG AirPlay (WROVER-E)"
+#elif defined(POG_BOARD_XIAO_S3) || \
+    (defined(CONFIG_BOARD_XIAO_ESP32S3) && CONFIG_BOARD_XIAO_ESP32S3)
 #define POGDEV_MODEL "POG AirPlay (XIAO S3)"
+#else
+#define POGDEV_MODEL "POG AirPlay"
+#endif
 
 /* Classe d'appareil, annoncée à l'adoption ET portée par le lien d'onboarding
  * BLE. pog Auth signe l'assertion sur {hw_id, challenge, device_class, model}

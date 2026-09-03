@@ -78,6 +78,59 @@ body::after{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;opa
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62%}
 a.row{color:var(--blue);text-decoration:none;font-weight:500;font-size:16px;transition:background .15s}
 a.row:active{background:var(--card-hi)}
+#mic-state{white-space:normal;overflow-wrap:anywhere}
+/* Voice: setup first, one primary action per conversation state. */
+#voice-card{--voice-muted:#b0b0bd;--voice-accent:var(--blue)}
+#voice-card .voice-pad{padding:22px}
+.voice-head{display:flex;align-items:center;gap:14px;margin-bottom:23px}
+.voice-symbol{width:46px;height:46px;display:grid;place-items:center;flex:none;border-radius:15px;
+  color:#64b0ff;background:rgba(10,132,255,.13);box-shadow:inset 0 0 0 1px rgba(100,176,255,.15)}
+.voice-symbol svg{width:24px;height:24px}
+.voice-copy{min-width:0}
+#voice-state{font-family:ui-rounded,'SF Pro Rounded',-apple-system,system-ui,sans-serif;font-size:20px;
+  line-height:1.2;font-weight:650;letter-spacing:-.025em;overflow-wrap:anywhere}
+.voice-sub{color:var(--voice-muted);font-size:13px;line-height:1.5;margin-top:5px}
+.voice-field{margin-bottom:17px}
+.voice-field>label{display:block;font-size:14px;font-weight:550;margin-bottom:7px}
+#voice-card input[type=url],#voice-card input[type=password]{display:block;width:100%;min-width:0;min-height:48px;
+  padding:12px 14px;margin:0;border:1px solid rgba(255,255,255,.2);border-radius:12px;
+  background:rgba(0,0,0,.24);color:var(--txt);font:400 16px -apple-system,system-ui,sans-serif;appearance:none;-webkit-appearance:none}
+#voice-card input::placeholder{color:#91919f;opacity:1}
+#voice-card input:focus{outline:2px solid #64b0ff;outline-offset:2px;border-color:transparent}
+#voice-card input:disabled{opacity:.65}
+.voice-help{color:var(--voice-muted);font-size:12px;line-height:1.5;margin-top:7px}
+.voice-consent{display:flex;align-items:flex-start;gap:11px;padding:13px;border:1px solid rgba(255,181,71,.28);
+  background:rgba(255,159,10,.065);border-radius:12px;margin:0 0 18px;cursor:pointer}
+.voice-consent input{width:21px;height:21px;flex:none;margin:1px 0 0;accent-color:var(--blue)}
+.voice-consent strong{display:block;font-size:13px;font-weight:600;color:#ffd394;line-height:1.4}
+.voice-consent small{display:block;font-size:12px;color:var(--voice-muted);line-height:1.5;margin-top:4px}
+#voice-card .btn{min-height:48px;margin:0}
+#voice-card .btn:disabled{opacity:1;background:rgba(255,255,255,.07);color:#9898a6;cursor:default}
+#voice-card .btn:focus-visible{outline:2px solid #64b0ff;outline-offset:3px}
+#voice-card .voice-secondary{margin-top:9px;color:var(--voice-muted);background:transparent;font-size:14px;font-weight:500}
+.voice-note{display:flex;align-items:flex-start;justify-content:center;gap:7px;color:var(--voice-muted);
+  font-size:12px;line-height:1.5;text-align:center;margin-top:13px}
+.voice-note svg{flex:none;width:14px;height:14px;margin-top:2px}
+#voice-card[data-state=listening] .voice-symbol{color:var(--green);background:rgba(48,209,88,.1);box-shadow:inset 0 0 0 1px rgba(48,209,88,.22)}
+#voice-card[data-state=listening] .voice-note{color:#77df98}
+.voice-reply{margin:0 0 18px;padding:0 0 0 14px;border-left:2px solid var(--blue);font-size:15px;line-height:1.55;overflow-wrap:anywhere}
+.voice-reply span{display:block;font-size:11px;color:var(--voice-muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
+#voice-error{margin-top:15px;padding:12px 14px;border-radius:12px;background:rgba(255,69,58,.08);color:#ffaaa3;
+  font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.voice-details{border-top:1px solid var(--hair);margin-top:21px;padding-top:2px}
+.voice-details>summary{display:flex;align-items:center;justify-content:space-between;min-height:48px;font-size:13px;
+  color:var(--voice-muted);cursor:pointer;list-style:none;gap:12px}
+.voice-details>summary::-webkit-details-marker{display:none}
+.voice-details>summary::after{content:'+';font-size:20px;font-weight:400}
+.voice-details[open]>summary::after{content:'−'}
+.voice-details p{font-size:12px;color:var(--voice-muted);line-height:1.55;margin-bottom:10px}
+.voice-connection{font-size:12px;line-height:1.5;margin-bottom:13px}
+.voice-connection>div{display:flex;gap:15px;justify-content:space-between;padding:7px 0}
+.voice-connection dt{color:var(--voice-muted);flex:none}
+.voice-connection dd{text-align:right;overflow-wrap:anywhere;min-width:0;font-variant-numeric:tabular-nums}
+#voice-card .voice-forget{min-height:44px;font-size:13px;font-weight:500;padding:8px 0;color:#ffaaa3}
+#voice-card [hidden]{display:none!important}
+@media(max-width:380px){#voice-card .voice-pad{padding:18px}.voice-head{gap:11px}#voice-state{font-size:19px}}
 a.row .chev{margin-left:auto;color:var(--txt3);font-size:20px;font-weight:400}
 
 /* inputs */
@@ -781,6 +834,73 @@ select option{background:#18181b;color:var(--txt)}
   <div class='row'><span class='lbl'>Horloge PTP</span><span class='val' id='audio-ptp'>–</span></div>
 </div></div>
 
+<div class='grp' id='mic-card' hidden><h2>Microphone · test local</h2><div class='card'>
+  <div class='row'><span class='lbl'>État</span><span class='val' id='mic-state' aria-live='polite'>Non configuré</span></div>
+  <div class='row'><span class='lbl'>Niveau / maximum</span><span class='val' id='mic-level'>–</span></div>
+  <div class='row'><span class='lbl'>Gauche · niveau / max</span><span class='val' id='mic-left'>–</span></div>
+  <div class='row'><span class='lbl'>Droite · niveau / max</span><span class='val' id='mic-right'>–</span></div>
+  <div class='row'><span class='lbl'>Mots non nuls · G / D</span><span class='val' id='mic-words'>–</span></div>
+  <div class='row'><span class='lbl'>GPIO BCLK / WS / DATA</span><span class='val' id='mic-pins'>–</span></div>
+  <div class='pad'><p>Le bouton « Tester le micro » mesure le niveau pendant 5 secondes, sans enregistrer ni transmettre le son.</p>
+    <button type='button' class='btn sec' id='mic-test' onclick='testMicrophone()' disabled>Tester le micro · 5 s</button>
+    <div id='mic-msg' role='status'></div>
+  </div>
+</div></div>
+
+<div class='grp' id='voice-card' hidden><h2>Voix · POG AI</h2><div class='card'><div class='voice-pad'>
+  <div class='voice-head'>
+    <div class='voice-symbol' aria-hidden='true'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round'><rect x='9' y='3' width='6' height='12' rx='3'/><path d='M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6'/></svg></div>
+    <div class='voice-copy'><h3 id='voice-state' aria-live='polite'>Activer la voix</h3><p class='voice-sub' id='voice-sub'>Associe cette enceinte à ton serveur POG AI.</p></div>
+  </div>
+  <form id='voice-pair-fields' onsubmit='voiceAction("enroll");return false'>
+    <div class='voice-field'>
+      <label for='voice-url'>Serveur POG AI</label>
+      <input id='voice-url' type='url' placeholder='http://serveur.local:8766' autocomplete='off' autocapitalize='none' spellcheck='false' required maxlength='200' aria-describedby='voice-url-help' oninput='voiceFormUpdate(true)'>
+      <p class='voice-help' id='voice-url-help'>L’adresse du serveur, avec son port si nécessaire.</p>
+    </div>
+    <div class='voice-field'>
+      <label for='voice-code'>Code d’association</label>
+      <input id='voice-code' type='password' inputmode='numeric' minlength='6' maxlength='32' required autocomplete='off' placeholder='Code temporaire' aria-describedby='voice-code-help' oninput='voiceFormUpdate(false)'>
+      <p class='voice-help' id='voice-code-help'>Crée un code dans l’administration POG AI.</p>
+    </div>
+    <label class='voice-consent' id='voice-lan-field' hidden>
+      <input type='checkbox' id='voice-lan' onchange='voiceFormUpdate(false)'>
+      <span><strong>Autoriser cette connexion locale</strong><small>En HTTP, le code, le jeton et la voix transitent sans chiffrement. À utiliser uniquement sur ton réseau de confiance.</small></span>
+    </label>
+    <button type='submit' class='btn' id='voice-enroll' disabled>Associer l’enceinte</button>
+  </form>
+  <div id='voice-controls' hidden>
+    <div id='voice-wake-controls' hidden>
+      <label for='voice-wake-model'>Mot de réveil</label>
+      <select id='voice-wake-model' style='width:100%;margin:8px 0 12px' aria-describedby='voice-wake-help'>
+        <option value='0'>Hey Jarvis</option><option value='1'>Okay Nabu</option><option value='2'>Alexa</option>
+      </select>
+      <p class='voice-help' id='voice-wake-help'>Détection sur l’enceinte, sans transmettre le son ambiant. Après le mot de réveil, attends « Je t’écoute » ou la lumière cyan pour parler. Le réglage est conservé après redémarrage.</p>
+      <button type='button' class='btn voice-secondary' id='voice-wake-toggle' onclick='voiceAction(voiceView.status.wake.enabled?"wake-off":"wake-on")'>Activer le réveil vocal</button>
+    </div>
+    <div class='voice-reply' id='voice-reply' hidden><span>Dernier message</span><p id='voice-text' aria-live='polite'></p></div>
+    <button type='button' class='btn' id='voice-start' onclick='voiceAction("start")' hidden>Parler à POG AI</button>
+    <button type='button' class='btn' id='voice-finish' onclick='voiceAction("finish")' hidden>Terminer ma demande</button>
+    <button type='button' class='btn voice-secondary' id='voice-cancel' onclick='voiceAction("cancel")' hidden>Annuler</button>
+  </div>
+  <div class='voice-note'>
+    <span id='voice-privacy'>Le micro reste coupé jusqu’à « Parler ».</span>
+  </div>
+  <p id='voice-error' role='alert' hidden></p>
+  <details class='voice-details'>
+    <summary id='voice-details-title'>À propos de la voix</summary>
+    <dl class='voice-connection' id='voice-connection' hidden>
+      <div><dt>Serveur</dt><dd id='voice-server'>–</dd></div>
+      <div><dt>Trames envoyées / reçues</dt><dd id='voice-frames'>0 / 0</dd></div>
+      <div><dt>Interruptions audio</dt><dd id='voice-underruns'>0</dd></div>
+    </dl>
+              <p>Chaque demande commence avec « Parler » et dure au maximum 15 secondes. Le micro se coupe dès que POG AI répond. La musique est coupée pendant la demande et la réponse, puis reprend.</p>
+    <p>Le réveil vocal, lorsqu’il est proposé, utilise le mot sélectionné. « Hey Pog » nécessite encore son propre modèle. Pas d’annulation d’écho : le détecteur s’arrête pendant la réponse, puis reprend. L’association POG AI est distincte de l’association POG Home.</p>
+    <p>Si la bande ARGB est activée : violet pendant la connexion, cyan pendant l’écoute, ambre pendant l’attente et vert au rythme de la réponse. Une erreur apparaît brièvement en rouge. La couleur ou l’effet habituel reprend ensuite, sans changer tes réglages.</p>
+    <button type='button' class='btn danger voice-forget' id='voice-forget' onclick='voiceAction("forget")' hidden>Oublier l’association POG AI</button>
+  </details>
+</div></div></div>
+
 <div class='grp'><h2>pog Home</h2><div class='card'><div class='pad'>
   <div class='pog-state'>
     <div class='pog-beacon' id='pog-beacon' aria-hidden='true'></div>
@@ -821,7 +941,7 @@ select option{background:#18181b;color:var(--txt)}
 
 </section><!-- /tab systeme -->
 
-<div class='foot'>AirPlay 2 Receiver · ESP32-S3</div>
+<div class='foot'>POG AirPlay · Récepteur AirPlay 2</div>
 
 </div><!-- /main -->
 
@@ -1455,9 +1575,129 @@ async function loadInfo(){
       if(i.eq_supported){document.getElementById('eq-card').style.display='';}
       document.getElementById('dev-name').placeholder=i.device_name||'Mon enceinte';
       if(!loadInfo._otaChecked){loadInfo._otaChecked=true;checkOTA(false);}}}catch(e){}}
+async function testMicrophone(){
+  var b=document.getElementById('mic-test'),m=document.getElementById('mic-msg');b.disabled=true;
+  try{var r=await authFetch('/api/microphone/test',{method:'POST'});
+    if(!r.ok)throw new Error(await r.text());
+    m.textContent='Parlez près du micro. La mesure s’arrête automatiquement après 5 secondes.';
+    for(var n=0;n<12;n++){await loadAudioStats();await new Promise(function(resolve){setTimeout(resolve,500);});}
+  }catch(e){m.textContent='Test non démarré : '+e.message;b.disabled=false;}
+}
+var voiceView={status:null,mic:null,pending:false,error:''};
+function voiceFormUpdate(resetConsent){
+  var url=document.getElementById('voice-url'),code=document.getElementById('voice-code');
+  var lan=document.getElementById('voice-lan'),parsed=null;
+  if(resetConsent)lan.checked=false;
+  try{parsed=new URL(url.value.trim());}catch(e){}
+  var valid=parsed&&/^https?:$/.test(parsed.protocol)&&!parsed.username&&!parsed.password&&!parsed.search&&!parsed.hash&&parsed.pathname==='/';
+  var local=!!(parsed&&parsed.protocol==='http:');
+  document.getElementById('voice-lan-field').hidden=!local;
+  lan.disabled=voiceView.pending||!!(voiceView.status&&voiceView.status.state==='pairing');
+  document.getElementById('voice-enroll').disabled=voiceView.pending||!!(voiceView.status&&(voiceView.status.busy||voiceView.status.state==='pairing'))||!valid||code.value.trim().length<6||(local&&!lan.checked);
+}
+async function voiceAction(action){
+  if(voiceView.pending)return;
+  if(action==='forget'&&!confirm('Oublier l’association POG AI de cette enceinte ?'))return;
+  var payload={action:action};
+  if(action==='wake-on'||action==='wake-off')payload={action:'wake',enabled:action==='wake-on',model:Number(document.getElementById('voice-wake-model').value)};
+  voiceView.error='';
+  if(action==='enroll'){
+    voiceFormUpdate(false);
+    if(document.getElementById('voice-enroll').disabled)return;
+    payload.api_url=document.getElementById('voice-url').value.trim();
+    payload.code=document.getElementById('voice-code').value.trim();
+    payload.allow_insecure_lan=/^http:\/\//i.test(payload.api_url)&&document.getElementById('voice-lan').checked;
+  }
+  voiceView.pending=true;renderVoice(voiceView.status,voiceView.mic);
+  try{
+    var r=await authFetch('/api/voice/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok){
+      var detail=await r.text(),message=detail;
+      if(r.status===403)message='Définis un mot de passe administrateur pour utiliser la voix.';
+      else if(detail.indexOf('ESP_ERR_INVALID_ARG')!==-1)message=payload.action==='wake'?'Choisis un mot de réveil disponible.':'Vérifie l’adresse du serveur et le code d’association.';
+      else if(detail.indexOf('ESP_ERR_INVALID_STATE')!==-1)message='L’enceinte est occupée. Termine le test du micro ou réessaie dans un instant.';
+      else if(detail.indexOf('ESP_ERR_NO_MEM')!==-1)message='Mémoire insuffisante. Redémarre l’enceinte avant de réessayer.';
+      throw new Error(message);
+    }
+    if(action==='enroll')document.getElementById('voice-code').value='';
+    await loadAudioStats();
+  }catch(e){voiceView.error=e.message||'Connexion impossible. Vérifie que l’enceinte est joignable.';}
+  finally{voiceView.pending=false;renderVoice(voiceView.status,voiceView.mic);}
+}
+function renderVoice(v,mic){
+  document.getElementById('voice-card').hidden=!v||!v.supported;
+  if(!v||!v.supported)return;
+  voiceView.status=v;voiceView.mic=mic;
+  var pairing=v.state==='pairing',busy=!!v.busy,waiting=voiceView.pending||pairing;
+  var wake=v.wake||{},armed=!!wake.enabled;
+  var canTalk=mic&&mic.configured&&mic.clock_ready&&(!mic.active||wake.active);
+  var names={unpaired:'Activer la voix',pairing:'Association en cours',ready:'Prête à t’écouter',connecting:'Connexion à POG AI',listening:'Je t’écoute',thinking:'Préparation de la réponse',speaking:'Réponse en cours',error:'Réessayons'};
+  var hints={unpaired:'Associe cette enceinte à ton serveur POG AI.',pairing:'Vérification du code auprès du serveur…',ready:'Appuie sur Parler pour faire une demande.',connecting:'Le micro reste coupé pendant la connexion.',listening:'Parle, puis termine ta demande. 15 s maximum.',thinking:'Le micro est coupé. Tu peux annuler.',speaking:'La musique reprendra après la réponse.',error:'Tu peux lancer une nouvelle demande.'};
+  if(!v.paired&&v.state==='error'){names.error='Association interrompue';hints.error='Vérifie les informations puis réessaie.';}
+  document.getElementById('voice-card').dataset.state=v.state;
+  document.getElementById('voice-state').textContent=names[v.state]||'Voix POG AI';
+  document.getElementById('voice-sub').textContent=v.paired&&!busy&&!canTalk?(mic&&mic.active?'Un test du micro est en cours.':'Le micro attend le démarrage audio de l’enceinte.'):hints[v.state]||'';
+  if(v.paired&&!busy&&armed){
+    document.getElementById('voice-state').textContent=wake.active?'À l’écoute de « '+wake.phrase+' »':'Réveil vocal activé';
+    document.getElementById('voice-sub').textContent='Dis « '+wake.phrase+' », puis attends « Je t’écoute » avant ta demande.';
+  }
+  document.getElementById('voice-pair-fields').hidden=!!v.paired;
+  document.getElementById('voice-url').disabled=waiting;
+  document.getElementById('voice-code').disabled=waiting;
+  document.getElementById('voice-enroll').textContent=pairing?'Association en cours…':voiceView.pending&&!v.paired?'Connexion…':'Associer l’enceinte';
+  voiceFormUpdate(false);
+  document.getElementById('voice-controls').hidden=!v.paired;
+  document.getElementById('voice-wake-controls').hidden=!wake.supported;
+  var wakeModel=document.getElementById('voice-wake-model');
+  if(!wakeModel.dataset.synced||armed){wakeModel.value=String(wake.model||0);wakeModel.dataset.synced='1';}
+  wakeModel.disabled=armed||busy||waiting;
+  document.getElementById('voice-wake-toggle').textContent=armed?'Couper le micro · désactiver le réveil':'Activer le réveil vocal';
+  document.getElementById('voice-wake-toggle').disabled=waiting||(!armed&&busy);
+  document.getElementById('voice-start').hidden=!v.paired||busy;
+  document.getElementById('voice-start').disabled=waiting||!canTalk;
+  document.getElementById('voice-finish').hidden=v.state!=='listening';
+  document.getElementById('voice-finish').disabled=voiceView.pending;
+  document.getElementById('voice-cancel').hidden=!busy;
+  document.getElementById('voice-cancel').disabled=voiceView.pending;
+  document.getElementById('voice-cancel').textContent=v.state==='speaking'?'Arrêter la réponse':'Annuler';
+  document.getElementById('voice-privacy').textContent=v.state==='listening'?'Micro transmis à ton serveur POG AI.':busy?'Micro coupé. Musique temporairement coupée.':armed?'Mot de réveil traité localement. Aucun son ambiant envoyé au serveur.':'Le micro reste coupé jusqu’à « Parler ».';
+  document.getElementById('voice-reply').hidden=!v.text;
+  document.getElementById('voice-text').textContent=v.text||'';
+  var error=voiceView.error||v.error||(armed&&wake.error&&wake.error!=='ESP_OK'?'Détecteur local indisponible : '+wake.error:'');
+  document.getElementById('voice-error').hidden=!error;
+  document.getElementById('voice-error').textContent=error;
+  document.getElementById('voice-connection').hidden=!v.paired;
+  document.getElementById('voice-server').textContent=v.api_url||'–';
+  document.getElementById('voice-frames').textContent=(v.uploaded_frames||0)+' / '+(v.downloaded_frames||0);
+  document.getElementById('voice-underruns').textContent=v.playout_underruns||0;
+  document.getElementById('voice-details-title').textContent=v.paired?'Connexion et détails':'À propos de la voix';
+  document.getElementById('voice-forget').hidden=!v.paired;
+  document.getElementById('voice-forget').disabled=waiting||busy;
+  if(busy)document.getElementById('mic-test').disabled=true;
+  clearTimeout(renderVoice.timer);
+  if(busy||pairing||armed)renderVoice.timer=setTimeout(loadAudioStats,busy?500:1500);
+}
 async function loadAudioStats(){
   try{var r=await authFetch('/api/audio/stats',{cache:'no-store'});if(!r.ok)return;var d=await r.json();
     if(!d.success)return;
+    var mic=d.microphone;document.getElementById('mic-card').hidden=!mic||!mic.supported;
+    if(mic&&mic.supported){
+      var stereo=typeof mic.left_peak_rms_dbfs==='number'&&typeof mic.right_peak_rms_dbfs==='number';
+      var result='Mesure terminée';
+      if(stereo&&mic.samples){
+        if(mic.left_nonzero_words===0&&mic.right_nonzero_words===0)result='Aucune donnée micro — vérifier L/R, alimentation et SD';
+        else if(mic.left_peak_rms_dbfs<=-96&&mic.right_peak_rms_dbfs<=-96)result='Données présentes, niveau sous −96 dBFS';
+        else if(mic.peak_rms_dbfs<=-96)result='Niveau présent sur le canal '+(mic.slot==='right'?'gauche':'droit')+' — vérifier L/R';
+      }
+      document.getElementById('mic-state').textContent=mic.active?(d.voice&&d.voice.busy?'Capture pour POG AI · audio transmis':d.voice&&d.voice.wake&&d.voice.wake.active?'Mot de réveil · écoute locale':'Mesure locale en cours…'):!mic.configured?'GPIO à configurer dans le firmware':mic.shared_clocks&&!mic.clock_ready?'En attente du démarrage audio (connexion Wi-Fi)':mic.error!=='ESP_OK'?mic.error:mic.samples?result:'Prêt pour un test';
+      document.getElementById('mic-level').textContent=mic.samples?mic.rms_dbfs.toFixed(1)+' / '+mic.peak_rms_dbfs.toFixed(1)+' dBFS':'–';
+      document.getElementById('mic-left').textContent=stereo&&mic.samples?mic.left_rms_dbfs.toFixed(1)+' / '+mic.left_peak_rms_dbfs.toFixed(1)+' dBFS':'–';
+      document.getElementById('mic-right').textContent=stereo&&mic.samples?mic.right_rms_dbfs.toFixed(1)+' / '+mic.right_peak_rms_dbfs.toFixed(1)+' dBFS':'–';
+      document.getElementById('mic-words').textContent=stereo&&mic.samples?mic.left_nonzero_words+' / '+mic.right_nonzero_words:'–';
+      document.getElementById('mic-pins').textContent=mic.bclk_gpio+' / '+mic.ws_gpio+' / '+mic.data_gpio+' · '+(mic.slot==='right'?'droite':'gauche');
+      document.getElementById('mic-test').disabled=mic.active||!mic.configured||(mic.shared_clocks&&!mic.clock_ready);
+    }
+    renderVoice(d.voice,mic);
     var codec=d.codec||'–',rate=d.sample_rate?Math.round(d.sample_rate/100)/10+' kHz':'–';
     document.getElementById('audio-format').textContent=codec+' · '+rate+' · '+(d.channels||0)+' ch';
     document.getElementById('audio-buffer').textContent=d.buffer_frames+'/'+d.buffer_capacity_frames+' · '+d.buffer_ms+' ms';

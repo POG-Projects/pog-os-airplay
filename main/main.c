@@ -1,6 +1,9 @@
 #include "amp_ctrl.h"
 #include "audio_limiter.h"
 #include "audio_output.h"
+#include "pogvoice.h"
+#include "pogwake.h"
+#include "pogmic_app.h"
 #include "audio_receiver.h"
 #include "audio_stream.h"
 #include "buttons.h"
@@ -46,6 +49,10 @@
 #include "freertos/task.h"
 
 static const char *TAG = "main";
+
+static bool wake_available(void) {
+  return pogvoice_paired() && !pogvoice_busy() && wifi_is_connected();
+}
 
 /* Le rappel d'adoption : `main` démarre le bus, le composant ne peut pas. */
 static void pogdev_bus_start_after_adoption(void) {
@@ -258,6 +265,8 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(ret);
   ESP_ERROR_CHECK(settings_init());
+  pogvoice_init(pogmic_app_stream_start);
+  pogwake_init(pogmic_app_monitor_start, wake_available, pogvoice_start_wake);
   spiffs_storage_init();
   log_stream_init();
   ESP_ERROR_CHECK(playback_control_init());

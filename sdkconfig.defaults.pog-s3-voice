@@ -1,0 +1,14 @@
+# Satellite vocal POG AI sur ESP32-S3 N16R8.
+# Se superpose à sdkconfig.defaults.pog-s3 : ampli inchangé (GPIO4/5/7), on
+# ajoute un micro I2S qui suit les horloges du haut-parleur.
+#
+# Vérifier le câblage physique avant de flasher. Micro L/R relié à GND.
+CONFIG_POG_MICROPHONE=y
+CONFIG_POG_MIC_SHARED_CLOCKS=y
+CONFIG_POG_MIC_BCLK_GPIO=4
+CONFIG_POG_MIC_WS_GPIO=5
+CONFIG_POG_MIC_DATA_GPIO=6
+CONFIG_POG_MIC_RIGHT_SLOT=n
+
+CONFIG_POG_VOICE=y
+CONFIG_POG_WAKEWORD=y
