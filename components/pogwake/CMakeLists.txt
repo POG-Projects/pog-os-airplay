@@ -1,7 +1,7 @@
 set(WAKE_SOURCES "pogwake.c")
 set(WAKE_DEPS pogmic pogvoice audio-resampler esp_timer nvs_flash)
 # IDF resolves component requirements before sdkconfig is available.
-if(IDF_TARGET STREQUAL "esp32")
+if(IDF_TARGET STREQUAL "esp32" OR IDF_TARGET STREQUAL "esp32s3")
     list(APPEND WAKE_DEPS espressif__esp-tflite-micro esphome__esp-micro-speech-features)
 endif()
 if(CONFIG_POG_WAKEWORD)
