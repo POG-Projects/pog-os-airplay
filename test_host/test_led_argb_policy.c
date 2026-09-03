@@ -21,14 +21,14 @@ int main(void) {
   assert(!led_argb_music_should_override(true, true, true, last_sound,
                                          last_sound - 1));
 
-  assert(led_argb_effect_should_render(true, true, false, false, 0,
-                                       last_sound));
-  assert(!led_argb_effect_should_render(false, true, false, false, 0,
-                                        last_sound));
-  assert(!led_argb_effect_should_render(true, false, false, false, 0,
-                                        last_sound));
-  assert(!led_argb_effect_should_render(true, true, true, false, 0,
-                                        last_sound));
+  assert(
+      led_argb_effect_should_render(true, true, false, false, 0, last_sound));
+  assert(
+      !led_argb_effect_should_render(false, true, false, false, 0, last_sound));
+  assert(
+      !led_argb_effect_should_render(true, false, false, false, 0, last_sound));
+  assert(
+      !led_argb_effect_should_render(true, true, true, false, 0, last_sound));
   assert(led_argb_effect_should_render(true, true, true, true, last_sound,
                                        last_sound));
 
