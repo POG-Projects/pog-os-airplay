@@ -588,6 +588,12 @@ select option{background:#18181b;color:var(--txt)}
       <input type='checkbox' id='ag-enabled'><span class='track'></span>
     </label>
   </div>
+  <div class='row' style='padding:0 0 14px;border-bottom:.5px solid var(--hair);margin-bottom:14px'>
+    <span class='lbl' style='color:var(--txt)'>Mode musique RGB</span>
+    <label class='sw' style='margin-left:auto'>
+      <input type='checkbox' id='ag-music'><span class='track'></span>
+    </label>
+  </div>
   <div class='fg'><label class='fld'>Effet</label>
     <select id='ag-effect'>
       <optgroup label='Réactifs (musique)'>
@@ -633,7 +639,7 @@ select option{background:#18181b;color:var(--txt)}
     </div>
     <div class='hint'>Broche data de la bande (WS2812 / WS2812B / SK6812). Sur le XIAO, D9 = GPIO 8.</div>
   </details>
-  <div class='hint'>Pilote une bande LED adressable. Les effets réagissent à la musique ; « Arc-en-ciel » et « Veilleuse » sont des ambiances. ⚡ Alimente la bande en 5V externe, masse commune avec l'ESP.</div>
+  <div class='hint'>La bande reste une lampe classique avec sa couleur et sa luminosité. Reliée à POG Home, le mode musique prend le dessus uniquement pendant un signal audio audible. ⚡ Alimente la bande en 5V externe, masse commune avec l'ESP.</div>
   <div id='ag-msg'></div>
 </div></div></div>
 
@@ -1123,15 +1129,17 @@ function loadNowPlaying(){
 function agDim(){
   /* visually dim effect + brightness + count when the strip is off */
   var on=document.getElementById('ag-enabled').checked;
-  document.getElementById('ag-effect').classList.toggle('dimmed',!on);
+  var music=document.getElementById('ag-music').checked;
+  document.getElementById('ag-effect').classList.toggle('dimmed',!on||!music);
   document.getElementById('ag-color-fg').classList.toggle('dimmed',!on);
-  document.getElementById('ag-speed-fg').classList.toggle('dimmed',!on);
+  document.getElementById('ag-speed-fg').classList.toggle('dimmed',!on||!music);
   document.getElementById('ag-br-fg').classList.toggle('dimmed',!on);
   document.getElementById('ag-count-fg').classList.toggle('dimmed',!on);
 }
 async function loadArgb(){
   try{var r=await fetch('/api/argb');var d=await r.json();
     if(typeof d.enabled==='boolean')document.getElementById('ag-enabled').checked=d.enabled;
+    if(typeof d.music_mode==='boolean')document.getElementById('ag-music').checked=d.music_mode;
     if(typeof d.effect==='number')document.getElementById('ag-effect').value=String(d.effect);
     if(typeof d.brightness==='number'){var b=document.getElementById('ag-br');b.value=d.brightness;document.getElementById('ag-br-val').textContent=d.brightness;b.style.setProperty('--p',(d.brightness/255*100)+'%');}
     if(typeof d.count==='number')document.getElementById('ag-count').value=d.count;
@@ -1145,6 +1153,7 @@ function agCount(){var v=parseInt(document.getElementById('ag-count').value,10);
 async function saveArgb(){
   var body={
     enabled:document.getElementById('ag-enabled').checked,
+    music_mode:document.getElementById('ag-music').checked,
     effect:parseInt(document.getElementById('ag-effect').value,10)||0,
     brightness:parseInt(document.getElementById('ag-br').value,10)||0,
     count:agCount(),gpio:agGpio(),
@@ -1469,6 +1478,7 @@ window.onload=function(){
   gs.onchange=function(){saveGain(parseInt(gs.value,10));};
   /* effets lumineux (bande ARGB): live-save on any change */
   document.getElementById('ag-enabled').onchange=function(){agDim();saveArgb();};
+  document.getElementById('ag-music').onchange=function(){agDim();saveArgb();};
   document.getElementById('ag-effect').onchange=saveArgb;
   var abr=document.getElementById('ag-br');
   abr.oninput=function(){document.getElementById('ag-br-val').textContent=abr.value;abr.style.setProperty('--p',(abr.value/255*100)+'%');};

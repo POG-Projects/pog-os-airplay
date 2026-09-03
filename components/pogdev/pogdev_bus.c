@@ -22,12 +22,14 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "pogdev";
 
 #define STATE_PERIOD_MS           30000
+#define HELLO_RETRY_MS            5000
 #define MQTT_RECONNECT_TIMEOUT_MS 60000
 /* Quand relancer le client échoue (mémoire, transport), on réessaie à ce
  * rythme — jamais d'abandon : un appareil mural doit retrouver un serveur qui
@@ -44,12 +46,16 @@ static pogdev_creds_t s_creds;
 static pogdev_cmd_handler s_handler;
 static pogdev_describe_fn s_describe;
 static pogdev_state_fn s_state;
+static pogdev_effect_frame_handler s_effect_handler;
+static bool s_effect_enabled;
 static char s_topic_hello[96], s_topic_state[96], s_topic_status[96],
     s_topic_cmd[96];
+static char s_effect_group[37], s_topic_effect[96];
 static volatile pogdev_bus_status_t s_status = POGDEV_BUS_NOT_STARTED;
 static pogdev_retry_t s_retry;
 static TaskHandle_t s_soin;
 static TaskHandle_t s_state_task_handle;
+static atomic_bool s_hello_dirty = true;
 /* Protège s_client pendant une bascule (arrêt/recréation par la tâche de
  * soin) contre les publications venues d'autres tâches. */
 static SemaphoreHandle_t s_client_lock;
@@ -62,10 +68,17 @@ static SemaphoreHandle_t s_client_lock;
  */
 static char *build_hello(void) {
   cJSON *root = cJSON_CreateObject();
+  if (root == NULL) {
+    return NULL;
+  }
   cJSON_AddNumberToObject(root, "proto", 1);
   cJSON_AddStringToObject(root, "hw_id", pogdev_hw_id());
   cJSON_AddStringToObject(root, "model", POGDEV_MODEL);
   cJSON_AddStringToObject(root, "fw_version", pogdev_fw_version());
+  if (s_effect_enabled) {
+    cJSON *features = cJSON_AddArrayToObject(root, "features");
+    cJSON_AddItemToArray(features, cJSON_CreateString("effect_sync_v1"));
+  }
 
   cJSON *entities = cJSON_AddArrayToObject(root, "entities");
   if (s_describe != NULL) {
@@ -79,6 +92,43 @@ static char *build_hello(void) {
   char *out = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
   return out;
+}
+
+/* QoS 1 reprend un message une fois accepté par la file esp-mqtt. En revanche,
+ * publish() renvoie -1 si cette mise en file locale échoue ; sans ce drapeau,
+ * une enceinte restait connectée mais invisible jusqu'à sa prochaine coupure.
+ */
+static bool publish_hello(void) {
+  if (!atomic_exchange(&s_hello_dirty, false)) {
+    return true;
+  }
+
+  char *hello = build_hello();
+  if (hello == NULL || s_client_lock == NULL) {
+    cJSON_free(hello);
+    atomic_store(&s_hello_dirty, true);
+    return false;
+  }
+
+  bool published = false;
+  if (xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (s_client != NULL && s_status == POGDEV_BUS_CONNECTED) {
+      int message_id = esp_mqtt_client_publish(s_client, s_topic_hello, hello,
+                                               0, 1, 1 /* retenu */);
+      published = message_id >= 0;
+      if (published) {
+        ESP_LOGI(TAG, "manifeste mis en file (id %d)", message_id);
+      }
+    }
+    xSemaphoreGive(s_client_lock);
+  }
+  cJSON_free(hello);
+
+  if (!published) {
+    atomic_store(&s_hello_dirty, true);
+    ESP_LOGW(TAG, "manifeste refuse par la file MQTT ; nouvel essai prevu");
+  }
+  return published;
 }
 
 static void publish_state(void) {
@@ -156,18 +206,27 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
     ESP_LOGI(TAG, "connecté au broker %s:%u", s_creds.mqtt_host,
              s_creds.mqtt_port);
     esp_mqtt_client_publish(s_client, s_topic_status, "online", 0, 1, 1);
-    char *hello = build_hello();
-    if (hello != NULL) {
-      esp_mqtt_client_publish(s_client, s_topic_hello, hello, 0, 1,
-                              1 /* retenu */);
-      cJSON_free(hello);
-    }
+    /* Republier à CHAQUE reconnexion : le broker peut avoir perdu ses retenus
+     * pendant que l'enceinte, elle, conserve son adoption en NVS. */
+    atomic_store(&s_hello_dirty, true);
+    publish_hello();
     esp_mqtt_client_subscribe(s_client, s_topic_cmd, 1);
+    if (s_topic_effect[0] != '\0') {
+      esp_mqtt_client_subscribe(s_client, s_topic_effect, 0);
+    }
     publish_state();
     break;
   }
   case MQTT_EVENT_DATA:
-    on_command(ev->data, ev->data_len);
+    if (s_topic_effect[0] != '\0' &&
+        ev->topic_len == (int)strlen(s_topic_effect) &&
+        memcmp(ev->topic, s_topic_effect, (size_t)ev->topic_len) == 0) {
+      if (s_effect_handler != NULL)
+        s_effect_handler(ev->data, ev->data_len);
+    } else if (ev->topic_len == (int)strlen(s_topic_cmd) &&
+               memcmp(ev->topic, s_topic_cmd, (size_t)ev->topic_len) == 0) {
+      on_command(ev->data, ev->data_len);
+    }
     break;
   case MQTT_EVENT_ERROR:
     /* Un refus d'authentification n'est PAS un ordre d'oubli : pendant que
@@ -188,6 +247,7 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
     }
     break;
   case MQTT_EVENT_DISCONNECTED:
+    atomic_store(&s_hello_dirty, true);
     if (s_status != POGDEV_BUS_AUTH_FAILED) {
       s_status = POGDEV_BUS_CONNECTING;
     }
@@ -206,9 +266,17 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
 
 static void state_task(void *arg) {
   (void)arg;
+  TickType_t last_state = xTaskGetTickCount();
   for (;;) {
-    vTaskDelay(pdMS_TO_TICKS(STATE_PERIOD_MS));
-    publish_state();
+    vTaskDelay(pdMS_TO_TICKS(HELLO_RETRY_MS));
+    if (atomic_load(&s_hello_dirty) && s_status == POGDEV_BUS_CONNECTED) {
+      publish_hello();
+    }
+    TickType_t now = xTaskGetTickCount();
+    if (now - last_state >= pdMS_TO_TICKS(STATE_PERIOD_MS)) {
+      last_state = now;
+      publish_state();
+    }
   }
 }
 
@@ -324,6 +392,58 @@ void pogdev_bus_notify(void) {
   publish_state();
 }
 
+void pogdev_bus_enable_effect_sync(pogdev_effect_frame_handler handler) {
+  if (s_client != NULL)
+    return;
+  s_effect_enabled = handler != NULL;
+  s_effect_handler = handler;
+}
+
+esp_err_t pogdev_bus_effect_sync_join(const char *group_id) {
+  if (!s_effect_enabled || group_id == NULL || strlen(group_id) != 36 ||
+      s_client_lock == NULL)
+    return ESP_ERR_INVALID_ARG;
+  char next[sizeof(s_topic_effect)];
+  int length = snprintf(next, sizeof(next), "pog/effects/%s/frame", group_id);
+  if (length < 0 || length >= (int)sizeof(next))
+    return ESP_ERR_INVALID_SIZE;
+  if (xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(250)) != pdTRUE)
+    return ESP_ERR_TIMEOUT;
+  esp_err_t result = ESP_ERR_INVALID_STATE;
+  if (s_client != NULL && s_status == POGDEV_BUS_CONNECTED) {
+    int id = esp_mqtt_client_subscribe(s_client, next, 0);
+    if (id >= 0) {
+      char old[sizeof(s_topic_effect)];
+      memcpy(old, s_topic_effect, sizeof(old));
+      memcpy(s_topic_effect, next, sizeof(next));
+      memcpy(s_effect_group, group_id, 37);
+      if (old[0] != '\0' && strcmp(old, next) != 0)
+        esp_mqtt_client_unsubscribe(s_client, old);
+      result = ESP_OK;
+    }
+  }
+  xSemaphoreGive(s_client_lock);
+  return result;
+}
+
+bool pogdev_bus_effect_sync_leave(const char *group_id) {
+  if (group_id == NULL || strcmp(group_id, s_effect_group) != 0)
+    return false;
+  pogdev_bus_effect_sync_cancel();
+  return true;
+}
+
+void pogdev_bus_effect_sync_cancel(void) {
+  if (s_client_lock == NULL ||
+      xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(250)) != pdTRUE)
+    return;
+  if (s_client != NULL && s_topic_effect[0] != '\0')
+    esp_mqtt_client_unsubscribe(s_client, s_topic_effect);
+  s_effect_group[0] = '\0';
+  s_topic_effect[0] = '\0';
+  xSemaphoreGive(s_client_lock);
+}
+
 pogdev_bus_status_t pogdev_bus_get_status(void) {
   return s_status;
 }
@@ -350,8 +470,8 @@ esp_err_t pogdev_bus_start(pogdev_describe_fn describe, pogdev_state_fn state,
       xTaskCreate(state_task, "pogdev_state", 3072, NULL, 2,
                   &s_state_task_handle) != pdPASS) {
     s_state_task_handle = NULL;
-    ESP_LOGW(TAG, "tâche d'état non créée : l'état ne partira que sur "
-                  "changement");
+    ESP_LOGW(TAG, "tâche de publication non créée : état sur changement et "
+                  "manifeste repris seulement à la reconnexion");
   }
   if (s_soin == NULL &&
       xTaskCreate(soin_task, "pogdev_soin", 4096, NULL, 2, &s_soin) != pdPASS) {

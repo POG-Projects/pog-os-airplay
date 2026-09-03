@@ -69,6 +69,20 @@ jobs:
             -o /tmp/pog-airplay-retry-test
           /tmp/pog-airplay-retry-test
 
+      - name: Compile and run effect synchronization tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I main \
+            test_host/test_effect_sync.c main/effect_sync.c -lm \
+            -o /tmp/pog-airplay-effect-sync-test
+          /tmp/pog-airplay-effect-sync-test
+
+      - name: Compile and run addressable light policy tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I main \
+            test_host/test_led_argb_policy.c main/led_argb_policy.c \
+            -o /tmp/pog-airplay-led-policy-test
+          /tmp/pog-airplay-led-policy-test
+
   format-check:
     runs-on: ubuntu-latest
     steps:

@@ -1,6 +1,7 @@
 #include "pogdev_discovery.h"
 
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -129,13 +130,21 @@ static bool txt_flag(const mdns_result_t *r, const char *key) {
   return false;
 }
 
-/* Retient le premier résultat qui porte une adresse IPv4.
+/* Retient le meilleur résultat IPv4, pas simplement le premier.
  *
- * On ignore les enregistrements sans A : sur un Mac, le même service est publié
- * sur plusieurs interfaces (Wi-Fi, ponts de virtualisation, Tailscale) et
- * certaines réponses arrivent sans adresse exploitable. Prendre la première
- * IPv4 vue est le comportement attendu ici — l'ESP32 n'a qu'un seul réseau. */
+ * Un foyer peut encore annoncer un ancien POG Home via Tailscale ou un pont de
+ * virtualisation. mDNS ne garantit aucun ordre : le premier résultat peut donc
+ * être parfaitement valide sur le papier mais inaccessible depuis l'ESP32.
+ * Le serveur présent sur le même sous-réseau que WIFI_STA_DEF gagne toujours ;
+ * à défaut, le contrat LAN v1 en clair est préféré à un relais TLS. */
 static bool take_result(const mdns_result_t *r, pogdev_server_t *out) {
+  esp_netif_ip_info_t wifi = {0};
+  esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  bool have_wifi = sta != NULL && esp_netif_get_ip_info(sta, &wifi) == ESP_OK &&
+                   wifi.ip.addr != 0 && wifi.netmask.addr != 0;
+  bool have_candidate = false;
+  int best_score = -1;
+
   for (; r != NULL; r = r->next) {
     if (r->addr == NULL) {
       continue;
@@ -144,22 +153,38 @@ static bool take_result(const mdns_result_t *r, pogdev_server_t *out) {
       if (a->addr.type != ESP_IPADDR_TYPE_V4) {
         continue;
       }
-      memset(out, 0, sizeof(*out));
+      pogdev_server_t candidate;
+      memset(&candidate, 0, sizeof(candidate));
       if (r->hostname != NULL) {
-        strlcpy(out->host, r->hostname, sizeof(out->host));
+        strlcpy(candidate.host, r->hostname, sizeof(candidate.host));
       }
-      out->addr = a->addr.u_addr.ip4;
+      candidate.addr = a->addr.u_addr.ip4;
       /* Le port du service EST le port de l'API : la découverte doit rendre
        * quelque chose d'interrogeable. Le port MQTT voyage dans le TXT. */
-      out->api_port = r->port;
-      out->api_port = txt_u16(r, "api", out->api_port);
-      out->mqtt_port = txt_u16(r, "mqtt", 1883);
-      out->tls = txt_flag(r, "tls");
-      out->proto = (int)txt_u16(r, "proto", 1);
-      return true;
+      candidate.api_port = txt_u16(r, "api", r->port);
+      candidate.mqtt_port = txt_u16(r, "mqtt", 1883);
+      candidate.tls = txt_flag(r, "tls");
+      candidate.proto = (int)txt_u16(r, "proto", 1);
+
+      int score = 0;
+      if (have_wifi && (candidate.addr.addr & wifi.netmask.addr) ==
+                           (wifi.ip.addr & wifi.netmask.addr)) {
+        score += 100;
+      }
+      if (!candidate.tls) {
+        score += 10;
+      }
+      if (candidate.proto == 1) {
+        score += 5;
+      }
+      if (!have_candidate || score > best_score) {
+        *out = candidate;
+        best_score = score;
+        have_candidate = true;
+      }
     }
   }
-  return false;
+  return have_candidate;
 }
 
 static void discovery_task(void *arg) {
