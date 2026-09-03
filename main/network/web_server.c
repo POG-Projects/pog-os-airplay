@@ -1829,7 +1829,8 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
   }
 
   // Stop AirPlay to free resources during OTA
-  if (!voice_quiesce_for_ota(req)) return ESP_FAIL;
+  if (!voice_quiesce_for_ota(req))
+    return ESP_FAIL;
   ESP_LOGI(TAG, "Stopping AirPlay for OTA update");
   rtsp_server_stop();
 
@@ -1939,7 +1940,8 @@ static esp_err_t ota_latest_handler(httpd_req_t *req) {
   }
 
   ESP_LOGI(TAG, "Stopping AirPlay for HTTPS OTA: %s", asset);
-  if (!voice_quiesce_for_ota(req)) return ESP_FAIL;
+  if (!voice_quiesce_for_ota(req))
+    return ESP_FAIL;
   rtsp_server_stop();
 
   esp_http_client_config_t http_config = {
@@ -2215,7 +2217,7 @@ static esp_err_t microphone_test_handler(httpd_req_t *req) {
   return httpd_resp_sendstr(req, "{\"success\":true,\"duration_ms\":5000}");
 }
 
-#define MIC_SAMPLE_SECONDS 2
+#define MIC_SAMPLE_SECONDS  2
 #define MIC_SAMPLE_MAX_RATE 48000
 
 typedef struct {
@@ -2387,7 +2389,8 @@ static esp_err_t voice_action_handler(httpd_req_t *req) {
       for (int i = 0; i < 100; i++) {
         pogwake_status_t wake;
         pogwake_get_status(&wake);
-        if (!wake.active) break;
+        if (!wake.active)
+          break;
         vTaskDelay(pdMS_TO_TICKS(10));
       }
       vTaskDelay(1);
@@ -2396,9 +2399,12 @@ static esp_err_t voice_action_handler(httpd_req_t *req) {
       const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(j, "enabled");
       const cJSON *model = cJSON_GetObjectItemCaseSensitive(j, "model");
       if (cJSON_IsBool(enabled) && cJSON_IsNumber(model) &&
-          model->valuedouble == model->valueint && model->valueint >= 0 && model->valueint < 3) {
-        err = pogwake_configure(cJSON_IsTrue(enabled), (unsigned)model->valueint);
-        if (!cJSON_IsTrue(enabled)) pogvoice_cancel();
+          model->valuedouble == model->valueint && model->valueint >= 0 &&
+          model->valueint < 3) {
+        err =
+            pogwake_configure(cJSON_IsTrue(enabled), (unsigned)model->valueint);
+        if (!cJSON_IsTrue(enabled))
+          pogvoice_cancel();
       }
     } else if (!strcmp(action->valuestring, "finish")) {
       pogvoice_finish();
@@ -2410,7 +2416,8 @@ static esp_err_t voice_action_handler(httpd_req_t *req) {
       pogwake_status_t wake;
       pogwake_get_status(&wake);
       err = wake.supported ? pogwake_configure(false, wake.model) : ESP_OK;
-      if (err == ESP_OK) err = pogvoice_forget();
+      if (err == ESP_OK)
+        err = pogvoice_forget();
     } else if (!strcmp(action->valuestring, "enroll")) {
       const cJSON *url = cJSON_GetObjectItemCaseSensitive(j, "api_url");
       const cJSON *code = cJSON_GetObjectItemCaseSensitive(j, "code");

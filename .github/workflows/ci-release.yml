@@ -69,7 +69,10 @@ jobs:
 
       - name: Test voice framing, trust boundaries and sample-rate conversion
         run: |
-          cc -std=c11 -fsanitize=address,undefined -c components/audio-resampler/resampler.c -o /tmp/pog-resampler.o
+          # gnu11 et non c11 : sur glibc, math.h ne declare M_PI que sous
+          # _DEFAULT_SOURCE. macOS l'expose meme en C strict, d'ou un test
+          # vert en local et rouge en CI.
+          cc -std=gnu11 -fsanitize=address,undefined -c components/audio-resampler/resampler.c -o /tmp/pog-resampler.o
           cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
             -I components/pogvoice/include -I components/audio-resampler \
             test_host/test_pogvoice.c components/pogvoice/pogvoice_protocol.c \

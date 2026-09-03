@@ -245,7 +245,8 @@ static esp_err_t capture_start(uint32_t duration_ms, uint64_t occupied,
   portEXIT_CRITICAL(&s_lock);
   /* Drain DMA ahead of the voice encoder; AirPlay decode occupies core 1. */
   if (xTaskCreatePinnedToCore(capture_task, "pogmic_test", 4096,
-                              (void *)(uintptr_t)duration_ms, 6, NULL, 0) != pdPASS) {
+                              (void *)(uintptr_t)duration_ms, 6, NULL,
+                              0) != pdPASS) {
     portENTER_CRITICAL(&s_lock);
     s_active = false;
     s_error = ESP_ERR_NO_MEM;
@@ -267,7 +268,9 @@ esp_err_t pogmic_stream_start(uint64_t occupied, pogmic_stream_cb cb,
   return capture_start(15000, occupied, cb, arg);
 }
 
-esp_err_t pogmic_monitor_start(uint64_t occupied, pogmic_stream_cb cb, void *arg) {
-  if (!cb) return ESP_ERR_INVALID_ARG;
+esp_err_t pogmic_monitor_start(uint64_t occupied, pogmic_stream_cb cb,
+                               void *arg) {
+  if (!cb)
+    return ESP_ERR_INVALID_ARG;
   return capture_start(0, occupied, cb, arg);
 }

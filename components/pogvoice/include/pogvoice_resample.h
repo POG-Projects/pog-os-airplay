@@ -1,7 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#define POGVOICE_FIR_TAPS 32
+#define POGVOICE_FIR_TAPS   32
 #define POGVOICE_FIR_PHASES 32
 typedef struct {
   unsigned input_rate, output_rate, phase, head;

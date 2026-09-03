@@ -47,4 +47,5 @@ esp_err_t pogmic_stream_start(uint64_t occupied, pogmic_stream_cb cb,
                               void *arg);
 void pogmic_stream_stop(void);
 /* Local detector only; runs until stop. Does not transmit or retain audio. */
-esp_err_t pogmic_monitor_start(uint64_t occupied, pogmic_stream_cb cb, void *arg);
+esp_err_t pogmic_monitor_start(uint64_t occupied, pogmic_stream_cb cb,
+                               void *arg);

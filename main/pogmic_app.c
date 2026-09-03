@@ -118,7 +118,8 @@ esp_err_t pogmic_app_stream_start(pogmic_stream_cb cb, void *arg) {
 }
 
 esp_err_t pogmic_app_monitor_start(pogmic_stream_cb cb, void *arg) {
-  if (!cb) return ESP_ERR_INVALID_ARG;
+  if (!cb)
+    return ESP_ERR_INVALID_ARG;
   return start_capture(cb, arg, true);
 }
 

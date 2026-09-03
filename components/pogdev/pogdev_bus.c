@@ -113,8 +113,8 @@ static bool publish_hello(void) {
   bool published = false;
   if (xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(100)) == pdTRUE) {
     if (s_client != NULL && s_status == POGDEV_BUS_CONNECTED) {
-      int message_id = esp_mqtt_client_publish(
-          s_client, s_topic_hello, hello, 0, 1, 1 /* retenu */);
+      int message_id = esp_mqtt_client_publish(s_client, s_topic_hello, hello,
+                                               0, 1, 1 /* retenu */);
       published = message_id >= 0;
       if (published) {
         ESP_LOGI(TAG, "manifeste mis en file (id %d)", message_id);
@@ -221,7 +221,8 @@ static void mqtt_event(void *args, esp_event_base_t base, int32_t id,
     if (s_topic_effect[0] != '\0' &&
         ev->topic_len == (int)strlen(s_topic_effect) &&
         memcmp(ev->topic, s_topic_effect, (size_t)ev->topic_len) == 0) {
-      if (s_effect_handler != NULL) s_effect_handler(ev->data, ev->data_len);
+      if (s_effect_handler != NULL)
+        s_effect_handler(ev->data, ev->data_len);
     } else if (ev->topic_len == (int)strlen(s_topic_cmd) &&
                memcmp(ev->topic, s_topic_cmd, (size_t)ev->topic_len) == 0) {
       on_command(ev->data, ev->data_len);
@@ -268,8 +269,7 @@ static void state_task(void *arg) {
   TickType_t last_state = xTaskGetTickCount();
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(HELLO_RETRY_MS));
-    if (atomic_load(&s_hello_dirty) &&
-        s_status == POGDEV_BUS_CONNECTED) {
+    if (atomic_load(&s_hello_dirty) && s_status == POGDEV_BUS_CONNECTED) {
       publish_hello();
     }
     TickType_t now = xTaskGetTickCount();
@@ -393,17 +393,20 @@ void pogdev_bus_notify(void) {
 }
 
 void pogdev_bus_enable_effect_sync(pogdev_effect_frame_handler handler) {
-  if (s_client != NULL) return;
+  if (s_client != NULL)
+    return;
   s_effect_enabled = handler != NULL;
   s_effect_handler = handler;
 }
 
 esp_err_t pogdev_bus_effect_sync_join(const char *group_id) {
   if (!s_effect_enabled || group_id == NULL || strlen(group_id) != 36 ||
-      s_client_lock == NULL) return ESP_ERR_INVALID_ARG;
+      s_client_lock == NULL)
+    return ESP_ERR_INVALID_ARG;
   char next[sizeof(s_topic_effect)];
   int length = snprintf(next, sizeof(next), "pog/effects/%s/frame", group_id);
-  if (length < 0 || length >= (int)sizeof(next)) return ESP_ERR_INVALID_SIZE;
+  if (length < 0 || length >= (int)sizeof(next))
+    return ESP_ERR_INVALID_SIZE;
   if (xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(250)) != pdTRUE)
     return ESP_ERR_TIMEOUT;
   esp_err_t result = ESP_ERR_INVALID_STATE;
@@ -424,14 +427,16 @@ esp_err_t pogdev_bus_effect_sync_join(const char *group_id) {
 }
 
 bool pogdev_bus_effect_sync_leave(const char *group_id) {
-  if (group_id == NULL || strcmp(group_id, s_effect_group) != 0) return false;
+  if (group_id == NULL || strcmp(group_id, s_effect_group) != 0)
+    return false;
   pogdev_bus_effect_sync_cancel();
   return true;
 }
 
 void pogdev_bus_effect_sync_cancel(void) {
   if (s_client_lock == NULL ||
-      xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(250)) != pdTRUE) return;
+      xSemaphoreTake(s_client_lock, pdMS_TO_TICKS(250)) != pdTRUE)
+    return;
   if (s_client != NULL && s_topic_effect[0] != '\0')
     esp_mqtt_client_unsubscribe(s_client, s_topic_effect);
   s_effect_group[0] = '\0';
