@@ -1,0 +1,10 @@
+menu "POG local wake word"
+config POG_WAKEWORD
+    bool "Local microWakeWord detector"
+    depends on POG_VOICE && IDF_TARGET_ESP32
+    default n
+    help
+        Recognizes a selected bundled wake word locally. No ambient audio is
+        transmitted while waiting. Runtime activation requires administrator
+        consent and is disabled by default.
+endmenu

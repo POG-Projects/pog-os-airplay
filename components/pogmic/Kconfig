@@ -1,0 +1,39 @@
+menu "POG microphone"
+    config POG_MICROPHONE
+        bool "Build optional I2S microphone capture"
+        depends on IDF_TARGET_ESP32 || IDF_TARGET_ESP32S3
+        default n
+        help
+            Digital I2S microphones with signed 24-bit data in 32-bit slots
+            (for example INMP441 or ICS-43434). Uses I2S1 as a separate
+            master or a receiver following AirPlay's I2S0 clock.
+            No capture at boot and no network audio streaming.
+            Confirm the physical wiring before setting the GPIOs below.
+
+    if POG_MICROPHONE
+        config POG_MIC_SHARED_CLOCKS
+            bool "Microphone shares the speaker BCLK and WS"
+            depends on IDF_TARGET_ESP32 && AUDIO_OUTPUT_I2S && !BT_A2DP_ENABLE
+            default n
+            help
+                I2S0 remains the only clock master. I2S1 receives as a slave
+                at the speaker sample rate; speaker slots become 32-bit.
+                Both microphone clock GPIOs must match the speaker exactly.
+                The output must be initialized before a local capture test.
+        config POG_MIC_BCLK_GPIO
+            int "Microphone BCLK GPIO (-1 = unconfigured)"
+            range -1 48
+            default -1
+        config POG_MIC_WS_GPIO
+            int "Microphone WS GPIO (-1 = unconfigured)"
+            range -1 48
+            default -1
+        config POG_MIC_DATA_GPIO
+            int "Microphone data input GPIO (-1 = unconfigured)"
+            range -1 48
+            default -1
+        config POG_MIC_RIGHT_SLOT
+            bool "Read right slot (microphone L/R tied high)"
+            default n
+    endif
+endmenu

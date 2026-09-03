@@ -57,6 +57,8 @@ and a complete serial-flash image for each supported release target.
 |---|---|---|---|
 | Generic ESP32-S3 DevKitC-1, N16R8 | `esp32s3` | `firmware-esp32s3.bin` | `merged-esp32s3.bin` |
 | Seeed XIAO ESP32-S3, 8 MB flash | `xiao-s3` | `firmware-xiao-s3.bin` | `merged-xiao-s3.bin` |
+| ESP32-WROVER-E, 4 MB flash + PSRAM | `wrover-e` | `firmware-wrover-e.bin` | `merged-wrover-e.bin` |
+| ESP32-WROVER-E vocal, I2S 32/33/25/35 | `wrover-e-voice` | `firmware-wrover-e-voice.bin` | `merged-wrover-e-voice.bin` |
 | SqueezeAMP, ESP32, Bluetooth, 8 MB | `squeezeamp` | `firmware-squeezeamp-bt.bin` | `merged-squeezeamp-bt.bin` |
 | Esparagus Audio Brick, ESP32, Bluetooth, 8 MB | `esparagus-audio-brick` | `firmware-esparagus-audio-brick-bt.bin` | `merged-esparagus-audio-brick-bt.bin` |
 
@@ -74,6 +76,13 @@ Other development environments are available in `platformio.ini`, but they are
 not necessarily published as release assets. The 4 MB SqueezeAMP build is
 currently excluded from releases because the complete web filesystem does not
 fit its SPIFFS partition.
+
+The WROVER-E profile is included in the release workflow; its assets become
+available with the next release containing this change. It retains two OTA
+slots and all web pages, omits optional TFT backgrounds, and disables Bluetooth
+and displays by default. The existing `esp32wrover-dev` profile is unchanged.
+See [WROVER-E and microphone bring-up](docs/WROVER_E_MICROPHONE.md) before
+flashing: a WROVER-E module name does not identify the attached audio wiring.
 
 ## 🧰 Hardware Requirements
 
@@ -150,6 +159,10 @@ Common PlatformIO environments:
 | `esparagus-louder` / `esparagus-louder-bt` | Louder Esparagus |
 | `esparagus-louder-s3` | ESP32-S3 Louder Esparagus |
 | `esp32wrover-dev` | Generic ESP32-WROVER development target |
+| `wrover-e` | ESP32-WROVER-E, 4 MB flash, compact web filesystem, optional microphone diagnostics |
+| `wrover-e-voice` | WROVER-E with shared I2S 32/33, amplifier DIN 25, microphone SD 35 and L/R grounded; explicit POG AI voice turns |
+
+See [POG AI voice setup](docs/POG_AI_VOICE.md) for pairing, privacy and current limits.
 
 ### Build with ESP-IDF
 

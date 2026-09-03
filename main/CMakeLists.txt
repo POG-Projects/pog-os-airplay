@@ -1,6 +1,7 @@
 set( SRC_FILES
     "main.c"
     "pogdev_app.c"
+    "pogmic_app.c"
     "alac_magic_cookie.c"
     "settings.c"
     "audio/audio_receiver.c"
@@ -44,6 +45,8 @@ set( SRC_FILES
     "led.c"
     "led_matrix.c"
     "led_argb.c"
+    "led_argb_policy.c"
+    "effect_sync.c"
     "audio/eq_events.c"
     "audio/eq_dsp.c"
     "audio/audio_limiter.c"
@@ -109,6 +112,9 @@ set( DEPS
     mqtt
     esp_app_format
     pogdev
+    pogmic
+    pogvoice
+    pogwake
 )
 
 # TODO: why these fall over in CI and fine locally...
@@ -131,11 +137,18 @@ idf_component_register(
 # Embed the control panel in the application image so normal OTA updates also
 # refresh the UI. A tiny .incbin wrapper avoids PlatformIO duplicating the
 # generated ESP-IDF binary-data source path.
+set(EMBEDDED_WEB_DIR "${CMAKE_BINARY_DIR}/embedded-web")
+execute_process(COMMAND "${PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/compress_web.py"
+    "${CMAKE_SOURCE_DIR}/data/www" "${EMBEDDED_WEB_DIR}"
+    COMMAND_ERROR_IS_FATAL ANY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/data/www/index.html"
+    "${CMAKE_SOURCE_DIR}/data/www/logs.html")
 set_source_files_properties(
     "network/web_index.S"
     PROPERTIES
         COMPILE_DEFINITIONS
-            "WEB_INDEX_HTML_PATH=\"${CMAKE_SOURCE_DIR}/data/www/index.html\";WEB_LOGS_HTML_PATH=\"${CMAKE_SOURCE_DIR}/data/www/logs.html\""
+            "WEB_INDEX_HTML_PATH=\"${EMBEDDED_WEB_DIR}/index.html.gz\";WEB_LOGS_HTML_PATH=\"${EMBEDDED_WEB_DIR}/logs.html.gz\""
         OBJECT_DEPENDS
             "${CMAKE_SOURCE_DIR}/data/www/index.html;${CMAKE_SOURCE_DIR}/data/www/logs.html"
 )

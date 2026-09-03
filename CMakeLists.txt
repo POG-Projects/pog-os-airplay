@@ -22,9 +22,34 @@ project(airplay2-receiver VERSION ${PROJECT_VER})
 
 include(cmake/fix_usb_device_uac_platformio.cmake)
 
+# Fit the optional local detector into the existing 4 MB dual-OTA layout.
+# ESP-NN keeps its optimized kernels; size-optimize TFLM's dispatch/helpers
+# instead of its component's default -O3. Do not modify managed sources.
+if(CONFIG_POG_WAKEWORD)
+    idf_component_get_property(pog_tflm_lib espressif__esp-tflite-micro COMPONENT_LIB)
+    get_target_property(pog_tflm_options ${pog_tflm_lib} COMPILE_OPTIONS)
+    string(REPLACE "-O3" "-Os" pog_tflm_options "${pog_tflm_options}")
+    set_target_properties(${pog_tflm_lib} PROPERTIES COMPILE_OPTIONS "${pog_tflm_options}")
+endif()
+
 # Build a SPIFFS image from data/ and flash it alongside the firmware.
 # Partition label "storage" matches partitions.csv. Used by:
 #   - components/dac_tas57xx/ (HybridFlow DAC firmware)
 #   - components/display/     (ST7789 background image)
 # Flash firmware + SPIFFS together with: idf.py build flash
-spiffs_create_partition_image(storage "${CMAKE_SOURCE_DIR}/data" FLASH_IN_PROJECT)
+if(CONFIG_BOARD_WROVER_E)
+    # The 4 MB board has no TFT. Keep every web resource, omitting only the
+    # optional display background that overflows its 188 KiB SPIFFS partition.
+    set(POG_SPIFFS_DATA "${CMAKE_BINARY_DIR}/compact-data")
+    execute_process(
+        COMMAND "${PYTHON}" "${CMAKE_SOURCE_DIR}/scripts/compact_filesystem.py"
+                "${CMAKE_SOURCE_DIR}/data" "${POG_SPIFFS_DATA}"
+        RESULT_VARIABLE POG_SPIFFS_RESULT
+    )
+    if(NOT POG_SPIFFS_RESULT EQUAL 0)
+        message(FATAL_ERROR "Could not stage the WROVER-E web filesystem")
+    endif()
+else()
+    set(POG_SPIFFS_DATA "${CMAKE_SOURCE_DIR}/data")
+endif()
+spiffs_create_partition_image(storage "${POG_SPIFFS_DATA}" FLASH_IN_PROJECT)
