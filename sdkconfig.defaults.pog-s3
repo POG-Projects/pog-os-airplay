@@ -1,0 +1,13 @@
+# ESP32-S3 N16R8 (DevKitC-1) câblé avec un MAX98357A sur GPIO4/5/7.
+# Se superpose à sdkconfig.defaults.esp32s3 : seules les broches I2S changent.
+CONFIG_I2S_BCK_IO=4
+CONFIG_I2S_WS_IO=5
+CONFIG_I2S_DO_IO=7
+
+# Le MAX98357A régénère son horloge depuis BCLK et n'a pas d'entrée MCLK :
+# la broche reste libre au lieu d'être pilotée pour rien.
+CONFIG_I2S_SCK_IO=-1
+
+# Pas de masse d'ampli sur un GPIO : un GPIO tient ~20 mA, un MAX98357A tire
+# plus d'un ampère en crête. La masse passe par une vraie broche GND.
+CONFIG_I2S_GND_IO=-1
