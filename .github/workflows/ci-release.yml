@@ -404,14 +404,13 @@ jobs:
           git merge-base --is-ancestor "$TAG_COMMIT" origin/main
           ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
           echo "SOURCE_COMMIT=$TAG_COMMIT" >> "$GITHUB_ENV"
-          echo "AIRPLAY_BUILD_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
       - name: Rebuild every release image from the tag
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5
           target: esp32s3
           command: >-
-            scripts/package_release_all.sh "$AIRPLAY_BUILD_VERSION" "$SOURCE_COMMIT";
+            scripts/package_release_all.sh "$(cat version.txt)" "$(git rev-parse HEAD)";
             rc=$?;
             chown -R --reference=. dist build sdkconfig 2>/dev/null || true;
             exit $rc

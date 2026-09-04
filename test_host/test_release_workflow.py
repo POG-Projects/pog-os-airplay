@@ -23,7 +23,7 @@ if release is None:
 for required in (
     "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
     "Validate immutable release source",
-    'scripts/package_release_all.sh "$AIRPLAY_BUILD_VERSION" "$SOURCE_COMMIT"',
+    'scripts/package_release_all.sh "$(cat version.txt)" "$(git rev-parse HEAD)"',
     "Publish one immutable GitHub release",
     "--verify-tag",
 ):
