@@ -54,6 +54,14 @@ menu "Board Configuration"
         bool
         default n
 
+    # Physical POG speaker built around a generic ESP32-S3 N16R8 module.  It
+    # deliberately reuses the generic board implementation; this marker keeps
+    # its release/OTA identity distinct because its I2S wiring is different.
+    config BOARD_POG_N16R8
+        bool "POG N16R8 speaker profile"
+        depends on IDF_TARGET_ESP32S3
+        default n
+
     config BOARD_TARGET_PATH
         string
         default "squeezeamp" if BOARD_SQUEEZEAMP

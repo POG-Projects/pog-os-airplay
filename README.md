@@ -58,6 +58,7 @@ and a complete serial-flash image for each supported release target.
 | Hardware | Release profile | OTA image | Full serial image |
 |---|---|---|---|
 | Generic ESP32-S3 DevKitC-1, N16R8 | `esp32s3` | `firmware-esp32s3.bin` | `merged-esp32s3.bin` |
+| POG AirPlay N16R8 + MAX98357A | `n16r8` | `firmware-n16r8.bin` | `merged-n16r8.bin` |
 | Seeed XIAO ESP32-S3, 8 MB flash | `xiao-s3` | `firmware-xiao-s3.bin` | `merged-xiao-s3.bin` |
 | ESP32-WROVER-E, 4 MB flash + PSRAM | `wrover-e` | `firmware-wrover-e.bin` | `merged-wrover-e.bin` |
 | ESP32-WROVER-E vocal, I2S 32/33/25/35 | `wrover-e-voice` | `firmware-wrover-e-voice.bin` | `merged-wrover-e-voice.bin` |
@@ -96,13 +97,14 @@ ESP32-S3 modules without PSRAM are not suitable.
 
 Common options include PCM5102A and MAX98357A modules.
 
-| Signal | `esp32s3` DevKit | `xiao-s3` |
-|---|---|---|
-| BCLK | GPIO 11 | GPIO 1 (D0) |
-| LRCLK / WS | GPIO 13 | GPIO 2 (D1) |
-| DIN / DO | GPIO 12 | GPIO 4 (D3) |
-| Amplifier SD/enable | Configurable | GPIO 5 (D4), configured at runtime |
-| Addressable LED data | Configurable | GPIO 8 (D9) |
+| Signal | `esp32s3` DevKit | POG `n16r8` | `xiao-s3` |
+|---|---|---|---|
+| MCLK | GPIO 8 | Not used | Not used |
+| BCLK | GPIO 11 | GPIO 4 | GPIO 1 (D0) |
+| LRCLK / WS | GPIO 13 | GPIO 5 | GPIO 2 (D1) |
+| DIN / DO | GPIO 12 | GPIO 7 | GPIO 4 (D3) |
+| Amplifier SD/enable | Configurable | Configurable | GPIO 5 (D4), configured at runtime |
+| Addressable LED data | Configurable | GPIO 8 | GPIO 8 (D9) |
 
 ### Power supply
 
@@ -154,6 +156,7 @@ Common PlatformIO environments:
 | Environment | Purpose |
 |---|---|
 | `esp32s3` | Generic 16 MB ESP32-S3 |
+| `n16r8` | POG N16R8, MAX98357A on GPIO 4/5/7, no MCLK |
 | `xiao-s3` | Seeed XIAO ESP32-S3 |
 | `squeezeamp` / `squeezeamp-bt` | SqueezeAMP without/with Bluetooth |
 | `esparagus-audio-brick` / `esparagus-audio-brick-bt` | Esparagus Audio Brick |

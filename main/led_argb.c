@@ -501,29 +501,6 @@ static void render_task(void *arg) {
       a.last_sound_us = esp_timer_get_time();
     }
 
-    effect_sync_frame_t shared;
-    effect_visualizer_t shared_visualizer = EFFECT_VISUALIZER_SPECTRUM;
-    struct timeval wall = {0};
-    gettimeofday(&wall, NULL);
-    uint64_t utc_ms =
-        wall.tv_sec > 1700000000
-            ? (uint64_t)wall.tv_sec * 1000ULL + wall.tv_usec / 1000
-            : 0;
-    bool shared_active;
-    portENTER_CRITICAL(&s_effect_sync_mux);
-    shared_active = effect_sync_sample(&s_effect_sync,
-                                       (uint32_t)(esp_timer_get_time() / 1000),
-                                       utc_ms, &shared);
-    shared_visualizer = s_effect_sync.visualizer;
-    portEXIT_CRITICAL(&s_effect_sync_mux);
-    if (shared_active) {
-      a.level = shared.level;
-      a.bass = shared.bass;
-      a.treble = shared.treble;
-      a.sound_seen = true;
-      a.last_sound_us = esp_timer_get_time();
-    }
-
     memset(s_fb, 0, (size_t)s_count * 3);
     int64_t now_us = esp_timer_get_time();
     const bool audio_reactive =

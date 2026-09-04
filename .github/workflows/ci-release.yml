@@ -210,6 +210,7 @@ jobs:
         run: |
           rm -rf .pio/build
           pio run -e xiao-s3
+          pio run -e n16r8
 
       - name: Build WROVER-E firmware and compact filesystem
         run: |
@@ -251,6 +252,12 @@ jobs:
             flash_size: "8MB"
             label: "Seeed XIAO ESP32-S3 (8 Mo)"
             sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.xiao"
+          - name: n16r8
+            env: n16r8
+            target: esp32s3
+            flash_size: "16MB"
+            label: "POG AirPlay N16R8 (MAX98357A, 16 Mo)"
+            sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.n16r8"
           - name: squeezeamp-bt
             env: squeezeamp
             target: esp32

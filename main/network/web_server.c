@@ -1867,6 +1867,8 @@ static const char *ota_release_env(void) {
 #elif defined(POG_BOARD_XIAO_S3) || \
     (defined(CONFIG_BOARD_XIAO_ESP32S3) && CONFIG_BOARD_XIAO_ESP32S3)
   return "xiao-s3";
+#elif defined(CONFIG_BOARD_POG_N16R8) && CONFIG_BOARD_POG_N16R8
+  return "n16r8";
 #elif defined(CONFIG_BOARD_ESP32S3_GENERIC) && CONFIG_BOARD_ESP32S3_GENERIC
   return "esp32s3";
 #elif defined(CONFIG_BOARD_SQUEEZEAMP) && CONFIG_BOARD_SQUEEZEAMP && \
@@ -1891,6 +1893,8 @@ static const char *ota_release_asset(void) {
     return "firmware-esp32s3.bin";
   if (strcmp(env, "xiao-s3") == 0)
     return "firmware-xiao-s3.bin";
+  if (strcmp(env, "n16r8") == 0)
+    return "firmware-n16r8.bin";
   if (strcmp(env, "squeezeamp") == 0)
     return "firmware-squeezeamp-bt.bin";
   if (strcmp(env, "esparagus-audio-brick") == 0)

@@ -3,6 +3,7 @@
 .pio/
 .venv/
 .vscode/
+**/__pycache__/
 build*
 managed_components/
 sdkconfig

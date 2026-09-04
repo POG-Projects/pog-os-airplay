@@ -1,0 +1,12 @@
+# POG AirPlay board — ESP32-S3 N16R8 with MAX98357A and ARGB strip.
+#
+# Keep the generic ESP32-S3 board implementation and 16 MB / octal-PSRAM
+# settings from sdkconfig.defaults.esp32s3, but use the wiring of the actual
+# assembled speaker.  The MAX98357A derives its clock from BCLK and does not
+# use MCLK.  Ground must come from a real GND pad, never from a GPIO.
+CONFIG_BOARD_POG_N16R8=y
+CONFIG_I2S_SCK_IO=-1
+CONFIG_I2S_BCK_IO=4
+CONFIG_I2S_WS_IO=5
+CONFIG_I2S_DO_IO=7
+CONFIG_I2S_GND_IO=-1
