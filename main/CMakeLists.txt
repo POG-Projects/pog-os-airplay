@@ -70,6 +70,12 @@ if(CONFIG_BT_A2DP_ENABLE)
     list(APPEND SRC_FILES "audio/a2dp_sink.c")
 endif()
 
+# BLE onboarding (NimBLE — ESP32-S3 targets; mutually exclusive with the
+# Bluedroid A2DP build above, which owns the radio on classic ESP32)
+if(CONFIG_BT_NIMBLE_ENABLED)
+    list(APPEND SRC_FILES "network/ble_onboarding.c" "network/onboarding.c")
+endif()
+
 # W5500 SPI Ethernet
 if(CONFIG_ETH_W5500_ENABLED)
     list(APPEND SRC_FILES "network/ethernet.c")

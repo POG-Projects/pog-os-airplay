@@ -69,7 +69,10 @@ jobs:
 
       - name: Test voice framing, trust boundaries and sample-rate conversion
         run: |
-          cc -std=c11 -fsanitize=address,undefined -c components/audio-resampler/resampler.c -o /tmp/pog-resampler.o
+          # gnu11 et non c11 : sur glibc, math.h ne declare M_PI que sous
+          # _DEFAULT_SOURCE. macOS l'expose meme en C strict, d'ou un test
+          # vert en local et rouge en CI.
+          cc -std=gnu11 -fsanitize=address,undefined -c components/audio-resampler/resampler.c -o /tmp/pog-resampler.o
           cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
             -I components/pogvoice/include -I components/audio-resampler \
             test_host/test_pogvoice.c components/pogvoice/pogvoice_protocol.c \
@@ -231,6 +234,18 @@ jobs:
             flash_size: "16MB"
             label: "ESP32-S3 DevKitC-1 (16 Mo)"
             sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.esp32s3"
+          - name: pog-s3
+            env: pog-s3
+            target: esp32s3
+            flash_size: "16MB"
+            label: "POG ESP32-S3 N16R8 (MAX98357A sur 4/5/7)"
+            sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.pog-s3"
+          - name: pog-s3-voice
+            env: pog-s3-voice
+            target: esp32s3
+            flash_size: "16MB"
+            label: "POG ESP32-S3 N16R8 satellite vocal"
+            sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.pog-s3;sdkconfig.defaults.pog-s3-voice"
           - name: xiao-s3
             env: xiao-s3
             target: esp32s3

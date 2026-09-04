@@ -140,9 +140,8 @@ static bool txt_flag(const mdns_result_t *r, const char *key) {
 static bool take_result(const mdns_result_t *r, pogdev_server_t *out) {
   esp_netif_ip_info_t wifi = {0};
   esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-  bool have_wifi =
-      sta != NULL && esp_netif_get_ip_info(sta, &wifi) == ESP_OK &&
-      wifi.ip.addr != 0 && wifi.netmask.addr != 0;
+  bool have_wifi = sta != NULL && esp_netif_get_ip_info(sta, &wifi) == ESP_OK &&
+                   wifi.ip.addr != 0 && wifi.netmask.addr != 0;
   bool have_candidate = false;
   int best_score = -1;
 
@@ -168,9 +167,8 @@ static bool take_result(const mdns_result_t *r, pogdev_server_t *out) {
       candidate.proto = (int)txt_u16(r, "proto", 1);
 
       int score = 0;
-      if (have_wifi &&
-          (candidate.addr.addr & wifi.netmask.addr) ==
-              (wifi.ip.addr & wifi.netmask.addr)) {
+      if (have_wifi && (candidate.addr.addr & wifi.netmask.addr) ==
+                           (wifi.ip.addr & wifi.netmask.addr)) {
         score += 100;
       }
       if (!candidate.tls) {

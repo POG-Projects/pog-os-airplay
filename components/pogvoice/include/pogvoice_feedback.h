@@ -15,5 +15,5 @@ typedef enum {
 
 /* Transient overlay only: never changes the lamp's saved settings. */
 bool pogvoice_feedback_render(uint8_t *rgb, size_t count,
-                               pogvoice_light_t state, uint32_t elapsed_ms,
-                               float level);
+                              pogvoice_light_t state, uint32_t elapsed_ms,
+                              float level);

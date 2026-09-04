@@ -72,12 +72,12 @@ bool pogvoice_speaker_read(int16_t *p, size_t c, size_t *n) {
 #include <stdlib.h>
 #include <string.h>
 
-#define SPEAKER_SAMPLES 32768
+#define SPEAKER_SAMPLES   32768
 #define SPEAKER_PREBUFFER (CONFIG_OUTPUT_SAMPLE_RATE_HZ * 240 / 1000)
 /* About 740 ms at 44.1 kHz mono PCM16, in PSRAM, to absorb Wi-Fi jitter. */
-#define MIC_BYTES       65536
-#define UPLINK_FRAME_MS 60
-#define UPLINK_SAMPLES (16000 * UPLINK_FRAME_MS / 1000)
+#define MIC_BYTES         65536
+#define UPLINK_FRAME_MS   60
+#define UPLINK_SAMPLES    (16000 * UPLINK_FRAME_MS / 1000)
 typedef struct {
   uint32_t version;
   char api[201], token[129], client[33];
@@ -468,8 +468,8 @@ bool pogvoice_speaker_read(int16_t *pcm, size_t cap, size_t *frames) {
   bool active = s_busy;
   size_t consumed = 0;
   if (active) {
-    consumed = pogvoice_playout_take(&s_playout, s_count, cap,
-                                      SPEAKER_PREBUFFER);
+    consumed =
+        pogvoice_playout_take(&s_playout, s_count, cap, SPEAKER_PREBUFFER);
     for (size_t i = 0; i < consumed; i++) {
       pcm[2 * i] = pcm[2 * i + 1] = s_speaker[s_tail];
       s_tail = (s_tail + 1) % SPEAKER_SAMPLES;
@@ -542,8 +542,10 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t event,
     int64_t now = esp_timer_get_time();
     if (c->last_reply_us) {
       uint32_t gap = (uint32_t)(now - c->last_reply_us);
-      if (gap > c->reply_gap_max_us) c->reply_gap_max_us = gap;
-      if (gap > 100000) c->reply_late_gaps++;
+      if (gap > c->reply_gap_max_us)
+        c->reply_gap_max_us = gap;
+      if (gap > 100000)
+        c->reply_late_gaps++;
     }
     c->last_reply_us = now;
   }
@@ -583,7 +585,8 @@ static bool control(connection_t *c, const char *type, const char *value,
   cJSON_AddStringToObject(j, "session_id", session);
   if (!strcmp(type, "listen")) {
     cJSON_AddStringToObject(j, "mode", s_wake_phrase[0] ? "auto" : "manual");
-    if (!strcmp(value, "detect")) cJSON_AddStringToObject(j, "text", s_wake_phrase);
+    if (!strcmp(value, "detect"))
+      cJSON_AddStringToObject(j, "text", s_wake_phrase);
   }
   return send_json(c, j);
 }
@@ -610,12 +613,11 @@ static esp_err_t mic_data(const int16_t *pcm, size_t n, uint32_t rate,
 }
 
 static bool encode_frame(connection_t *c, void *encoder, int16_t *pcm) {
-  esp_audio_enc_in_frame_t in = {
-      .buffer = (uint8_t *)pcm, .len = UPLINK_SAMPLES * sizeof(*pcm)};
+  esp_audio_enc_in_frame_t in = {.buffer = (uint8_t *)pcm,
+                                 .len = UPLINK_SAMPLES * sizeof(*pcm)};
   esp_audio_enc_out_frame_t out = {.buffer = c->opus, .len = sizeof(c->opus)};
   if (!s_uploaded)
-    ESP_LOGI("pogvoice", "first encode: core=%d stack_min=%u",
-             xPortGetCoreID(),
+    ESP_LOGI("pogvoice", "first encode: core=%d stack_min=%u", xPortGetCoreID(),
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
   int64_t started = esp_timer_get_time();
   if (esp_opus_enc_process(encoder, &in, &out) != ESP_AUDIO_ERR_OK)
@@ -624,8 +626,8 @@ static bool encode_frame(connection_t *c, void *encoder, int16_t *pcm) {
   c->encode_us += elapsed;
   if (elapsed > c->encode_max_us)
     c->encode_max_us = elapsed;
-  size_t n =
-      pogvoice_v3_encode(c->packet, sizeof(c->packet), c->opus, out.encoded_bytes);
+  size_t n = pogvoice_v3_encode(c->packet, sizeof(c->packet), c->opus,
+                                out.encoded_bytes);
   started = esp_timer_get_time();
   if (!n || esp_websocket_client_send_bin(c->ws, (char *)c->packet, (int)n,
                                           pdMS_TO_TICKS(250)) != (int)n)
@@ -636,7 +638,8 @@ static bool encode_frame(connection_t *c, void *encoder, int16_t *pcm) {
     c->send_max_us = elapsed;
   c->frames++;
   if (c->frames % 100 == 0)
-    ESP_LOGI("pogvoice", "upload frames=%u encode_us=%u/%u send_us=%u/%u queued=%u",
+    ESP_LOGI("pogvoice",
+             "upload frames=%u encode_us=%u/%u send_us=%u/%u queued=%u",
              (unsigned)c->frames, (unsigned)(c->encode_us / c->frames),
              (unsigned)c->encode_max_us, (unsigned)(c->send_us / c->frames),
              (unsigned)c->send_max_us,
@@ -653,19 +656,19 @@ static void conversation(void *unused) {
   portENTER_CRITICAL(&s_lock);
   cfg = s_config;
   portEXIT_CRITICAL(&s_lock);
-  connection_t *c = heap_caps_calloc(1, sizeof(*c),
-                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  connection_t *c =
+      heap_caps_calloc(1, sizeof(*c), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   /* PCM scratch is CPU-only, not DMA. Keep it out of the internal heap
    * needed by I2S, Wi-Fi and task control blocks. */
-  pogvoice_resampler_t *up = heap_caps_calloc(
-      1, sizeof(*up), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  pogvoice_resampler_t *down = heap_caps_calloc(
-      1, sizeof(*down), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  pogvoice_resampler_t *up =
+      heap_caps_calloc(1, sizeof(*up), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  pogvoice_resampler_t *down =
+      heap_caps_calloc(1, sizeof(*down), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   void *encoder = NULL, *decoder = NULL;
   int16_t *decoded = heap_caps_malloc(2880 * sizeof(int16_t),
-                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   int16_t *converted = heap_caps_malloc(1024 * sizeof(int16_t),
-                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   unsigned reply_rate = 0;
   bool mic_started = false, listening = false, hello_sent = false, tts = false,
        done = false;
@@ -679,8 +682,8 @@ static void conversation(void *unused) {
   c->messages = xQueueCreate(128, sizeof(message_t *));
   c->mic_control = heap_caps_calloc(1, sizeof(*c->mic_control),
                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  c->mic_storage = heap_caps_malloc(MIC_BYTES + 1,
-                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  c->mic_storage =
+      heap_caps_malloc(MIC_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (c->mic_control && c->mic_storage)
     c->mic = xStreamBufferCreateStatic(MIC_BYTES + 1, 1, c->mic_storage,
                                        c->mic_control);
@@ -783,7 +786,8 @@ static void conversation(void *unused) {
               info.bits_per_sample != 16)
             failure = "Décodage Opus impossible";
           else {
-            uint32_t decode_us = (uint32_t)(esp_timer_get_time() - decode_started);
+            uint32_t decode_us =
+                (uint32_t)(esp_timer_get_time() - decode_started);
             c->decode_us += decode_us;
             if (decode_us > c->decode_max_us)
               c->decode_max_us = decode_us;
@@ -799,13 +803,16 @@ static void conversation(void *unused) {
                                                    converted, 1024);
               uint32_t cpu_us = (uint32_t)(esp_timer_get_time() - cpu_started);
               c->resample_cpu_us += cpu_us;
-              if (cpu_us > c->resample_cpu_max_us) c->resample_cpu_max_us = cpu_us;
+              if (cpu_us > c->resample_cpu_max_us)
+                c->resample_cpu_max_us = cpu_us;
               if (got < 0 || !speaker_write(converted, (size_t)got))
                 failure = "Sortie audio indisponible";
             }
-            uint32_t resample_us = (uint32_t)(esp_timer_get_time() - resample_started);
+            uint32_t resample_us =
+                (uint32_t)(esp_timer_get_time() - resample_started);
             c->resample_us += resample_us;
-            if (resample_us > c->resample_max_us) c->resample_max_us = resample_us;
+            if (resample_us > c->resample_max_us)
+              c->resample_max_us = resample_us;
             portENTER_CRITICAL(&s_lock);
             s_downloaded++;
             portEXIT_CRITICAL(&s_lock);
@@ -864,14 +871,16 @@ static void conversation(void *unused) {
               failure = "Initialisation des codecs impossible";
             else if (finish_requested()) {
               done = true;
-            } else if (!control(c, "listen", s_wake_phrase[0] ? "detect" : "start", session))
+            } else if (!control(c, "listen",
+                                s_wake_phrase[0] ? "detect" : "start", session))
               failure = "Démarrage de l’écoute impossible";
             else {
               esp_err_t capture_error = s_capture(mic_data, c);
-              ESP_LOGI("pogvoice", "capture start: %s DMA free=%u largest=%u",
-                       esp_err_to_name(capture_error),
-                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-                       (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+              ESP_LOGI(
+                  "pogvoice", "capture start: %s DMA free=%u largest=%u",
+                  esp_err_to_name(capture_error),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
               if (capture_error != ESP_OK)
                 failure = capture_error == ESP_ERR_NO_MEM
                               ? "Mémoire interne insuffisante pour le micro"
@@ -1048,18 +1057,22 @@ cleanup:
   free(decoded);
   free(converted);
   if (c && c->frames)
-    ESP_LOGI("pogvoice", "upload complete frames=%u encode_us=%u/%u send_us=%u/%u",
+    ESP_LOGI("pogvoice",
+             "upload complete frames=%u encode_us=%u/%u send_us=%u/%u",
              (unsigned)c->frames, (unsigned)(c->encode_us / c->frames),
              (unsigned)c->encode_max_us, (unsigned)(c->send_us / c->frames),
              (unsigned)c->send_max_us);
   if (c && c->decoded_frames)
-    ESP_LOGI("pogvoice", "reply frames=%u decode_us=%u/%u played=%u underruns=%u",
+    ESP_LOGI("pogvoice",
+             "reply frames=%u decode_us=%u/%u played=%u underruns=%u",
              (unsigned)c->decoded_frames,
              (unsigned)(c->decode_us / c->decoded_frames),
              (unsigned)c->decode_max_us, (unsigned)s_playout.played_samples,
              (unsigned)s_playout.underruns);
   if (c && c->decoded_frames)
-    ESP_LOGI("pogvoice", "reply timing: resample_cpu_us=%u/%u resample_write_us=%u/%u network_gap_max_us=%u gaps_over_100ms=%u",
+    ESP_LOGI("pogvoice",
+             "reply timing: resample_cpu_us=%u/%u resample_write_us=%u/%u "
+             "network_gap_max_us=%u gaps_over_100ms=%u",
              (unsigned)(c->resample_cpu_us / c->decoded_frames),
              (unsigned)c->resample_cpu_max_us,
              (unsigned)(c->resample_us / c->decoded_frames),
@@ -1102,10 +1115,12 @@ esp_err_t pogvoice_start_wake(const char *phrase) {
   strlcpy(s_wake_phrase, phrase ? phrase : "", sizeof(s_wake_phrase));
   strlcpy(s_state, "connecting", sizeof(s_state));
   portEXIT_CRITICAL(&s_lock);
-  ESP_LOGI("pogvoice", "start: reserved_stack=%u internal free=%u largest=%u",
-           (unsigned)POGVOICE_WORKER_STACK_BYTES,
-           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  ESP_LOGI(
+      "pogvoice", "start: reserved_stack=%u internal free=%u largest=%u",
+      (unsigned)POGVOICE_WORKER_STACK_BYTES,
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                 MALLOC_CAP_8BIT));
   /* AirPlay decode/playback are pinned to core 1. Explicitly keep voice on
    * core 0 instead of letting the first floating-point operation pin it to
    * whichever core happened to run it, behind the priority-8 music decoder. */
@@ -1114,8 +1129,10 @@ esp_err_t pogvoice_start_wake(const char *phrase) {
     portENTER_CRITICAL(&s_lock);
     s_busy = false;
     strlcpy(s_state, "error", sizeof(s_state));
-    strlcpy(s_error, queued == ESP_ERR_NO_MEM ? "Mémoire insuffisante" :
-                                               "Traitement audio occupé", sizeof(s_error));
+    strlcpy(s_error,
+            queued == ESP_ERR_NO_MEM ? "Mémoire insuffisante"
+                                     : "Traitement audio occupé",
+            sizeof(s_error));
     portEXIT_CRITICAL(&s_lock);
     return queued;
   }

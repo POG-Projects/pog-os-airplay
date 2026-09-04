@@ -4,9 +4,9 @@
 #include "sdkconfig.h"
 
 #ifdef CONFIG_BOARD_WROVER_E
-#define BOARD_NAME        "ESP32-WROVER-E"
+#define BOARD_NAME "ESP32-WROVER-E"
 #else
-#define BOARD_NAME        "ESP32 Generic"
+#define BOARD_NAME "ESP32 Generic"
 #endif
 #define BOARD_DESCRIPTION "Generic ESP32 dev board with external I2S DAC"
 
