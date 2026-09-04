@@ -211,7 +211,7 @@ static esp_err_t capture_start(uint32_t duration_ms, uint64_t occupied,
   const int reserved[] = {0, 1, 2, 3, 5, 12, 15, 16, 17};
 #else
   /* S3 flash/PSRAM (including octal pins), USB and strapping pins. */
-  occupied |= UINT64_C(0x7FF) << 26;
+  occupied |= UINT64_C(0xFFF) << 26;
   const int reserved[] = {0, 3, 19, 20, 45, 46};
 #endif
   for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++) {

@@ -13,7 +13,8 @@ menu "POG microphone"
     if POG_MICROPHONE
         config POG_MIC_SHARED_CLOCKS
             bool "Microphone shares the speaker BCLK and WS"
-            depends on IDF_TARGET_ESP32 && AUDIO_OUTPUT_I2S && !BT_A2DP_ENABLE
+            depends on (IDF_TARGET_ESP32 || IDF_TARGET_ESP32S3) && \
+                AUDIO_OUTPUT_I2S && !BT_A2DP_ENABLE
             default n
             help
                 I2S0 remains the only clock master. I2S1 receives as a slave
