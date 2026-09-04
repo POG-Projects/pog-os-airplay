@@ -3,14 +3,19 @@ name: CI & Release
 on:
   push:
     branches: [main]
+    tags: ["v*"]
     paths-ignore:
       - "**.md"
   pull_request:
     branches: [main]
     paths-ignore:
       - "**.md"
-  # Pour recouper une release sans avoir à pousser un commit vide.
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing semantic-version tag to publish
+        required: true
+        type: string
 
 # Pousser deux fois en une minute lançait deux matrices complètes en parallèle,
 # dont la première ne servait plus à rien. La branche par défaut est exclue de
@@ -25,40 +30,34 @@ permissions:
 
 jobs:
   version:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      bumped: ${{ steps.version.outputs.bumped }}
     steps:
       - uses: actions/checkout@v6
 
-      # Resolve the release number before compiling. Every binary, manifest and
-      # tag must be produced from the same version value.
-      - name: Determine version
+      - name: Validate declared version
         id: version
         env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           VERSION=$(tr -d '[:space:]' < version.txt)
-          BUMPED=false
-
-          if [ "$EVENT_NAME" != "pull_request" ] && \
-             gh release view "v$VERSION" > /dev/null 2>&1; then
-            LATEST_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
-            LATEST_VERSION=${LATEST_TAG#v}
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
-            VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-            BUMPED=true
+          printf '%s\n' "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test "v$VERSION" = "$RELEASE_TAG"
           fi
-
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
 
   host-tests:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Validate release policy
+        run: python3 test_host/test_release_workflow.py
 
       - name: Compile and run microphone PCM and GPIO safety tests
         run: |
@@ -103,6 +102,7 @@ jobs:
           /tmp/pog-airplay-led-policy-test
 
   format-check:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -137,6 +137,7 @@ jobs:
             | xargs -0 clang-format --dry-run --Werror
 
   lint-check:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -181,6 +182,7 @@ jobs:
   # casse le lien côté PlatformIO. Sans ce job, ce genre de panne ne se découvre
   # que sur le bureau de quelqu'un, longtemps après.
   platformio-build:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -220,6 +222,7 @@ jobs:
           pio run -e wrover-e-voice -t buildfs
 
   build:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: [format-check, lint-check, platformio-build, version, host-tests]
     strategy:
@@ -346,110 +349,79 @@ jobs:
           }
           EOF
 
-      - name: Upload firmware artifact
-        uses: actions/upload-artifact@v6
+  dispatch-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
         with:
-          name: firmware-${{ matrix.name }}
-          path: dist/*
-          # Ces artefacts ne servent qu'a passer du job `build` au job `release`
-          # du meme run : le firmware publie vit dans la release, pas ici. Sans
-          # cette ligne GitHub les garde 90 jours, et une matrice de cartes
-          # multipliee par chaque push finit par saturer le stockage de toute
-          # l'organisation — mesure en aout 2026 : 507 Go-mois pour ce seul
-          # depot, contre 0,5 Go inclus, ce qui a bloque la publication d'un
-          # canal dans un autre depot.
-          retention-days: 1
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag source and dispatch trusted publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$VERSION" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          test "v$(tr -d '[:space:]' < version.txt)" = "$VERSION"
+          TAG_COMMIT=$(git rev-parse "${VERSION}^{commit}")
+          test "$TAG_COMMIT" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$TAG_COMMIT" origin/main
+          ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          gh workflow run ci-release.yml --repo "$GITHUB_REPOSITORY" \
+            --ref main -f "release_tag=$VERSION"
 
   release:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    needs: [build, version]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on:
+      group: POG Release trusted
+      labels: pog-release-linux-x64
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
-
-      - name: Download all firmware artifacts
-        uses: actions/download-artifact@v6
         with:
-          path: dist
-          pattern: firmware-*
-          merge-multiple: true
-
-      - name: Assemble manifest.json
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.release_tag }}
+          submodules: recursive
+      - name: Validate immutable release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_tag }}
         run: |
-          VERSION="${{ needs.version.outputs.version }}"
-          {
-            echo "{"
-            echo "  \"version\": \"${VERSION}\","
-            echo "  \"boards\": ["
-            FIRST=1
-            for f in $(ls dist/manifest-*.json | sort); do
-              if [ $FIRST -eq 0 ]; then echo "    ,"; fi
-              sed 's/^/    /' "$f"
-              FIRST=0
-            done
-            echo "  ]"
-            echo "}"
-          } > dist/manifest.json
-          rm -f dist/manifest-*.json
-          echo "--- manifest.json ---"; cat dist/manifest.json
-          echo "--- assets ---"; ls -l dist
-
-      # Le manifeste est ce que lira le flasher : s'il est mal formé ou qu'il
-      # cite une image absente, la panne se découvre au moment où quelqu'un
-      # essaie d'écrire sur une carte. La release est le dernier endroit où on
-      # peut encore refuser.
-      - name: Validate manifest
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          m = json.load(open("dist/manifest.json"))
-          boards = m.get("boards") or []
-          if not boards:
-              sys.exit("manifest.json declares no board")
-          seen = set()
-          for b in boards:
-              for key in ("env", "label", "chip", "flashSize", "app", "merged", "mergedSha256"):
-                  if not b.get(key):
-                      sys.exit(f"board {b.get('env', '?')}: missing {key}")
-              if b["env"] in seen:
-                  sys.exit(f"duplicate env {b['env']}")
-              seen.add(b["env"])
-              for key in ("app", "merged"):
-                  path = os.path.join("dist", b[key])
-                  if not os.path.isfile(path):
-                      sys.exit(f"board {b['env']}: {b[key]} is declared but absent")
-              size = os.path.getsize(os.path.join("dist", b["merged"]))
-              if b.get("mergedSize") not in (None, size):
-                  sys.exit(f"board {b['env']}: mergedSize {b['mergedSize']} != {size}")
-          print(f"manifest.json: {len(boards)} board(s), every asset present")
-          PY
-
-      - name: Write SHA256SUMS
-        working-directory: dist
-        run: |
-          sha256sum *.bin manifest.json > SHA256SUMS
-          cat SHA256SUMS
-
-      - name: Update version.txt
-        if: needs.version.outputs.bumped == 'true'
-        run: |
-          echo "${{ needs.version.outputs.version }}" > version.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.txt
-          git commit -m "Bump version to ${{ needs.version.outputs.version }} [skip ci]"
-          git push
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+          set -euo pipefail
+          printf '%s\n' "$VERSION" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          test "v$(tr -d '[:space:]' < version.txt)" = "$VERSION"
+          TAG_COMMIT=$(git rev-parse "${VERSION}^{commit}")
+          test "$TAG_COMMIT" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$TAG_COMMIT" origin/main
+          ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          echo "SOURCE_COMMIT=$TAG_COMMIT" >> "$GITHUB_ENV"
+          echo "AIRPLAY_BUILD_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+      - name: Rebuild every release image from the tag
+        uses: espressif/esp-idf-ci-action@v1
         with:
-          tag_name: v${{ needs.version.outputs.version }}
-          name: v${{ needs.version.outputs.version }}
-          files: |
-            dist/*.bin
-            dist/manifest.json
-            dist/SHA256SUMS
-          make_latest: true
-          generate_release_notes: true
+          esp_idf_version: v5.5
+          target: esp32s3
+          command: >-
+            scripts/package_release_all.sh "$AIRPLAY_BUILD_VERSION" "$SOURCE_COMMIT";
+            rc=$?;
+            chown -R --reference=. dist build sdkconfig 2>/dev/null || true;
+            exit $rc
+      - name: Publish one immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          gh release create "$VERSION" dist/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "POG OS AirPlay $VERSION" --generate-notes
