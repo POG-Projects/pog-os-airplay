@@ -21,6 +21,10 @@ menu "Board Configuration"
             bool "ESP32 Board with >4M PSRAM"
             depends on IDF_TARGET_ESP32
 
+        config BOARD_WROVER_E
+            bool "ESP32-WROVER-E (4MB flash, PSRAM)"
+            depends on IDF_TARGET_ESP32
+
         config BOARD_ESPARAGUS_AUDIO_BRICK
             bool "Esparagus Audio Brick (ESP32, TAS58xx)"
             depends on IDF_TARGET_ESP32
@@ -50,12 +54,21 @@ menu "Board Configuration"
         bool
         default n
 
+    # Physical POG speaker built around a generic ESP32-S3 N16R8 module.  It
+    # deliberately reuses the generic board implementation; this marker keeps
+    # its release/OTA identity distinct because its I2S wiring is different.
+    config BOARD_POG_N16R8
+        bool "POG N16R8 speaker profile"
+        depends on IDF_TARGET_ESP32S3
+        default n
+
     config BOARD_TARGET_PATH
         string
         default "squeezeamp" if BOARD_SQUEEZEAMP
         default "squeezeamp" if BOARD_SQUEEZEAMP_4M
         default "esp32s3-generic" if BOARD_ESP32S3_GENERIC
         default "esp32-generic" if BOARD_ESP32_GENERIC
+        default "esp32-generic" if BOARD_WROVER_E
         default "esparagus-audio-brick" if BOARD_ESPARAGUS_AUDIO_BRICK
         default "esparagus-audio-brick" if BOARD_ESPARAGUS_AUDIO_BRICK_S3
         default "waveshare-esp32p4" if BOARD_WAVESHARE_ESP32P4

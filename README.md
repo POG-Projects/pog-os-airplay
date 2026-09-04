@@ -56,7 +56,10 @@ and a complete serial-flash image for each supported release target.
 | Hardware | Release profile | OTA image | Full serial image |
 |---|---|---|---|
 | Generic ESP32-S3 DevKitC-1, N16R8 | `esp32s3` | `firmware-esp32s3.bin` | `merged-esp32s3.bin` |
+| POG AirPlay N16R8 + MAX98357A | `n16r8` | `firmware-n16r8.bin` | `merged-n16r8.bin` |
 | Seeed XIAO ESP32-S3, 8 MB flash | `xiao-s3` | `firmware-xiao-s3.bin` | `merged-xiao-s3.bin` |
+| ESP32-WROVER-E, 4 MB flash + PSRAM | `wrover-e` | `firmware-wrover-e.bin` | `merged-wrover-e.bin` |
+| ESP32-WROVER-E vocal, I2S 32/33/25/35 | `wrover-e-voice` | `firmware-wrover-e-voice.bin` | `merged-wrover-e-voice.bin` |
 | SqueezeAMP, ESP32, Bluetooth, 8 MB | `squeezeamp` | `firmware-squeezeamp-bt.bin` | `merged-squeezeamp-bt.bin` |
 | Esparagus Audio Brick, ESP32, Bluetooth, 8 MB | `esparagus-audio-brick` | `firmware-esparagus-audio-brick-bt.bin` | `merged-esparagus-audio-brick-bt.bin` |
 
@@ -75,6 +78,13 @@ not necessarily published as release assets. The 4 MB SqueezeAMP build is
 currently excluded from releases because the complete web filesystem does not
 fit its SPIFFS partition.
 
+The WROVER-E profile is included in the release workflow; its assets become
+available with the next release containing this change. It retains two OTA
+slots and all web pages, omits optional TFT backgrounds, and disables Bluetooth
+and displays by default. The existing `esp32wrover-dev` profile is unchanged.
+See [WROVER-E and microphone bring-up](docs/WROVER_E_MICROPHONE.md) before
+flashing: a WROVER-E module name does not identify the attached audio wiring.
+
 ## 🧰 Hardware Requirements
 
 AirPlay 2 requires **PSRAM**. Supported choices include an ESP32-S3 with PSRAM
@@ -85,13 +95,14 @@ ESP32-S3 modules without PSRAM are not suitable.
 
 Common options include PCM5102A and MAX98357A modules.
 
-| Signal | `esp32s3` DevKit | `xiao-s3` |
-|---|---|---|
-| BCLK | GPIO 11 | GPIO 1 (D0) |
-| LRCLK / WS | GPIO 13 | GPIO 2 (D1) |
-| DIN / DO | GPIO 12 | GPIO 4 (D3) |
-| Amplifier SD/enable | Configurable | GPIO 5 (D4), configured at runtime |
-| Addressable LED data | Configurable | GPIO 8 (D9) |
+| Signal | `esp32s3` DevKit | POG `n16r8` | `xiao-s3` |
+|---|---|---|---|
+| MCLK | GPIO 8 | Not used | Not used |
+| BCLK | GPIO 11 | GPIO 4 | GPIO 1 (D0) |
+| LRCLK / WS | GPIO 13 | GPIO 5 | GPIO 2 (D1) |
+| DIN / DO | GPIO 12 | GPIO 7 | GPIO 4 (D3) |
+| Amplifier SD/enable | Configurable | Configurable | GPIO 5 (D4), configured at runtime |
+| Addressable LED data | Configurable | GPIO 8 | GPIO 8 (D9) |
 
 ### Power supply
 
@@ -143,6 +154,7 @@ Common PlatformIO environments:
 | Environment | Purpose |
 |---|---|
 | `esp32s3` | Generic 16 MB ESP32-S3 |
+| `n16r8` | POG N16R8, MAX98357A on GPIO 4/5/7, no MCLK |
 | `xiao-s3` | Seeed XIAO ESP32-S3 |
 | `squeezeamp` / `squeezeamp-bt` | SqueezeAMP without/with Bluetooth |
 | `esparagus-audio-brick` / `esparagus-audio-brick-bt` | Esparagus Audio Brick |
@@ -150,6 +162,10 @@ Common PlatformIO environments:
 | `esparagus-louder` / `esparagus-louder-bt` | Louder Esparagus |
 | `esparagus-louder-s3` | ESP32-S3 Louder Esparagus |
 | `esp32wrover-dev` | Generic ESP32-WROVER development target |
+| `wrover-e` | ESP32-WROVER-E, 4 MB flash, compact web filesystem, optional microphone diagnostics |
+| `wrover-e-voice` | WROVER-E with shared I2S 32/33, amplifier DIN 25, microphone SD 35 and L/R grounded; explicit POG AI voice turns |
+
+See [POG AI voice setup](docs/POG_AI_VOICE.md) for pairing, privacy and current limits.
 
 ### Build with ESP-IDF
 

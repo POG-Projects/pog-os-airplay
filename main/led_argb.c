@@ -1,5 +1,9 @@
 #include "led_argb.h"
+#include "led_argb_policy.h"
+#include "effect_sync.h"
+#include "pogvoice.h"
 
+#include "pogdev_bus.h"
 #include "settings.h"
 
 #include "esp_log.h"
@@ -12,6 +16,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 static const char *TAG = "led_argb";
 
@@ -33,12 +38,16 @@ typedef struct {
   float level;  // overall RMS level, ~0..1 (smoothed + AGC)
   float bass;   // low-frequency energy, ~0..1
   float treble; // high-frequency energy, ~0..1
+  int64_t last_sound_us;
+  bool sound_seen;
 } argb_audio_t;
 
 static portMUX_TYPE s_audio_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile argb_audio_t s_audio = {0};
 static uint32_t s_audio_feed_calls;
 static float s_peak = 1000.0f; // AGC peak tracker (audio task only)
+static portMUX_TYPE s_effect_sync_mux = portMUX_INITIALIZER_UNLOCKED;
+static effect_sync_t s_effect_sync;
 
 // ============================================================================
 // Live config + runtime state
@@ -51,6 +60,7 @@ typedef struct {
   uint8_t cr;
   uint8_t cg;
   uint8_t cb;
+  bool music;
   uint32_t revision;
 } argb_config_t;
 
@@ -66,6 +76,7 @@ static argb_config_t s_config = {
     .cr = 0x20,
     .cg = 0x80,
     .cb = 0xFF,
+    .music = false,
     .revision = 0,
 };
 /* Renderer-owned copy.  Effect helpers only read this copy. */
@@ -155,6 +166,20 @@ static inline void fb_set_color(int i, uint8_t v) {
 // Effects: render into s_fb (R,G,B per LED), full 0..255 — the master
 // brightness is applied later in strip_show().
 // ============================================================================
+
+static void fx_shared(const effect_sync_frame_t *frame,
+                      effect_visualizer_t visualizer) {
+  for (int i = 0; i < s_count; ++i) {
+    float position = effect_sync_pixel_position((size_t)i, (size_t)s_count);
+    effect_sync_pixel_t pixel =
+        effect_sync_visualizer_pixel(visualizer, position, frame);
+    uint8_t r, g, b;
+    hsv2rgb((uint8_t)(pixel.hue * 255.0f),
+            (uint8_t)(pixel.saturation * 255.0f),
+            (uint8_t)(pixel.value * 255.0f), &r, &g, &b);
+    fb_set(i, r, g, b);
+  }
+}
 
 // --- 0: VU-metre (bar grows from the start, green->red, white peak dot) -----
 static void fx_vu(const argb_audio_t *a) {
@@ -429,6 +454,8 @@ static void strip_show(void) {
 static void render_task(void *arg) {
   (void)arg;
   int64_t next_us = esp_timer_get_time();
+  pogvoice_light_t previous_voice = POGVOICE_LIGHT_OFF;
+  int64_t voice_since_us = next_us;
 
   while (!s_task_stop) {
     argb_config_t config;
@@ -447,47 +474,104 @@ static void render_task(void *arg) {
     a.level = s_audio.level;
     a.bass = s_audio.bass;
     a.treble = s_audio.treble;
+    a.last_sound_us = s_audio.last_sound_us;
+    a.sound_seen = s_audio.sound_seen;
     portEXIT_CRITICAL(&s_audio_mux);
+    float voice_level = a.level;
+
+    effect_sync_frame_t shared;
+    effect_visualizer_t shared_visualizer = EFFECT_VISUALIZER_SPECTRUM;
+    struct timeval wall = {0};
+    gettimeofday(&wall, NULL);
+    uint64_t utc_ms = wall.tv_sec > 1700000000
+                          ? (uint64_t)wall.tv_sec * 1000ULL + wall.tv_usec / 1000
+                          : 0;
+    bool shared_active;
+    portENTER_CRITICAL(&s_effect_sync_mux);
+    shared_active = effect_sync_sample(
+        &s_effect_sync, (uint32_t)(esp_timer_get_time() / 1000), utc_ms,
+        &shared);
+    shared_visualizer = s_effect_sync.visualizer;
+    portEXIT_CRITICAL(&s_effect_sync_mux);
+    if (shared_active) {
+      a.level = shared.level;
+      a.bass = shared.bass;
+      a.treble = shared.treble;
+      a.sound_seen = true;
+      a.last_sound_us = esp_timer_get_time();
+    }
 
     memset(s_fb, 0, (size_t)s_count * 3);
-    switch (s_frame_config.fx) {
-    case 1:
-      fx_spectrum(&a);
-      break;
-    case 2:
-      fx_bass_pulse(&a);
-      break;
-    case 3:
-      fx_rainbow();
-      break;
-    case 4:
-      fx_nightlight();
-      break;
-    case 5:
-      fx_vu_center(&a);
-      break;
-    case 6:
-      fx_beat_strobe(&a);
-      break;
-    case 7:
+    int64_t now_us = esp_timer_get_time();
+    const bool audio_reactive = s_frame_config.fx == 0 ||
+                                s_frame_config.fx == 1 ||
+                                s_frame_config.fx == 2 ||
+                                s_frame_config.fx == 5 ||
+                                s_frame_config.fx == 6 ||
+                                s_frame_config.fx == 11;
+    bool effect_active = led_argb_effect_should_render(
+        pogdev_bus_get_status() == POGDEV_BUS_CONNECTED, s_frame_config.music,
+        audio_reactive, a.sound_seen, a.last_sound_us, now_us);
+    pogvoice_light_t voice = pogvoice_light_state();
+    if (voice != previous_voice) {
+      previous_voice = voice;
+      voice_since_us = now_us;
+    }
+    if (voice == POGVOICE_LIGHT_LISTENING) {
+      pogmic_status_t mic;
+      pogmic_get_status(&mic);
+      voice_level = mic.active ? (mic.rms_dbfs + 60.0f) / 40.0f : 0;
+    }
+    bool voice_active = pogvoice_feedback_render(
+        s_fb, (size_t)s_count, voice,
+        (uint32_t)((now_us - voice_since_us) / 1000), voice_level);
+    if (voice_active) {
+      /* Voice is a local, temporary overlay. Lamp configuration and incoming
+       * group effects continue updating underneath and resume immediately. */
+    } else if (shared_active) {
+      fx_shared(&shared, shared_visualizer);
+    } else if (!effect_active) {
       fx_solid();
-      break;
-    case 8:
-      fx_breathe();
-      break;
-    case 9:
-      fx_comet();
-      break;
-    case 10:
-      fx_twinkle();
-      break;
-    case 11:
-      fx_level_color(&a);
-      break;
-    case 0:
-    default:
-      fx_vu(&a);
-      break;
+    } else {
+      switch (s_frame_config.fx) {
+      case 1:
+        fx_spectrum(&a);
+        break;
+      case 2:
+        fx_bass_pulse(&a);
+        break;
+      case 3:
+        fx_rainbow();
+        break;
+      case 4:
+        fx_nightlight();
+        break;
+      case 5:
+        fx_vu_center(&a);
+        break;
+      case 6:
+        fx_beat_strobe(&a);
+        break;
+      case 7:
+        fx_solid();
+        break;
+      case 8:
+        fx_breathe();
+        break;
+      case 9:
+        fx_comet();
+        break;
+      case 10:
+        fx_twinkle();
+        break;
+      case 11:
+        fx_level_color(&a);
+        break;
+      case 0:
+      default:
+        fx_vu(&a);
+        break;
+      }
     }
     strip_show();
 
@@ -562,7 +646,8 @@ static void argb_stop(void) {
   ESP_LOGI(TAG, "strip stopped");
 }
 
-static void apply_config(int fx, int brightness, uint32_t color, int speed) {
+static void apply_config(int fx, int brightness, uint32_t color, int speed,
+                         bool music) {
   portENTER_CRITICAL(&s_config_mux);
   s_config.fx = fx;
   s_config.brightness = brightness;
@@ -570,12 +655,13 @@ static void apply_config(int fx, int brightness, uint32_t color, int speed) {
   s_config.cg = (uint8_t)((color >> 8) & 0xFF);
   s_config.cb = (uint8_t)(color & 0xFF);
   s_config.speed = (speed < 1) ? 1 : (speed > 10 ? 10 : speed);
+  s_config.music = music;
   s_config.revision++;
   portEXIT_CRITICAL(&s_config_mux);
 }
 
 static void argb_start(int fx, int brightness, int gpio, int count,
-                       uint32_t color, int speed) {
+                       uint32_t color, int speed, bool music) {
   if (gpio < 0 || count <= 0) {
     ESP_LOGW(TAG, "strip enabled but invalid (gpio=%d count=%d)", gpio, count);
     return;
@@ -617,12 +703,14 @@ static void argb_start(int fx, int brightness, int gpio, int count,
 
   s_gpio = gpio;
   s_count = count;
-  apply_config(fx, brightness, color, speed);
+  apply_config(fx, brightness, color, speed, music);
 
   portENTER_CRITICAL(&s_audio_mux);
   s_audio.level = 0.0f;
   s_audio.bass = 0.0f;
   s_audio.treble = 0.0f;
+  s_audio.last_sound_us = 0;
+  s_audio.sound_seen = false;
   s_audio_feed_calls = 0;
   portEXIT_CRITICAL(&s_audio_mux);
   s_peak = 1000.0f;
@@ -644,8 +732,8 @@ static void argb_start(int fx, int brightness, int gpio, int count,
     return;
   }
 
-  ESP_LOGI(TAG, "strip started: fx=%d br=%d gpio=%d count=%d speed=%d", fx,
-           brightness, gpio, count, speed);
+  ESP_LOGI(TAG, "strip started: fx=%d br=%d gpio=%d count=%d speed=%d music=%d",
+           fx, brightness, gpio, count, speed, music);
 }
 
 // ============================================================================
@@ -654,21 +742,28 @@ static void argb_start(int fx, int brightness, int gpio, int count,
 
 void led_argb_init(void) {
   bool en = false;
+  bool music = false;
   int fx = 0, br = 128, gpio = -1, count = 0, speed = 5;
   uint32_t color = 0x2080FF;
-  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed);
+  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed, &music);
   if (!en) {
     ESP_LOGI(TAG, "strip disabled (no RMT, no task)");
     return;
   }
-  argb_start(fx, br, gpio, count, color, speed);
+  argb_start(fx, br, gpio, count, color, speed, music);
 }
 
 void led_argb_reconfigure(void) {
   bool en = false;
+  bool music = false;
   int fx = 0, br = 128, gpio = -1, count = 0, speed = 5;
   uint32_t color = 0x2080FF;
-  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed);
+  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed, &music);
+
+  /* Toute modification locale de la lampe reprend la main. Le join configure
+   * ensuite le suivi sans repasser par cette fonction. */
+  led_argb_effect_sync_cancel();
+  pogdev_bus_effect_sync_cancel();
 
   if (!en) {
     argb_stop();
@@ -677,13 +772,14 @@ void led_argb_reconfigure(void) {
 
   // Same GPIO + count already running: apply fx/brightness/colour/speed live.
   if (s_running && gpio == s_gpio && count == s_count) {
-    apply_config(fx, br, color, speed);
-    ESP_LOGI(TAG, "strip updated live: fx=%d br=%d speed=%d", fx, br, speed);
+    apply_config(fx, br, color, speed, music);
+    ESP_LOGI(TAG, "strip updated live: fx=%d br=%d speed=%d music=%d", fx, br,
+             speed, music);
     return;
   }
 
   argb_stop();
-  argb_start(fx, br, gpio, count, color, speed);
+  argb_start(fx, br, gpio, count, color, speed, music);
 }
 
 void led_argb_feed(const int16_t *pcm, size_t stereo_samples) {
@@ -707,6 +803,7 @@ void led_argb_feed(const int16_t *pcm, size_t stereo_samples) {
   float rms = sqrtf((float)sum_sq / (float)total);
   float bass_abs = (float)bass_sum / (float)total;
   float treble_abs = (float)diff_sum / (float)total;
+  int64_t sound_us = led_argb_audio_is_audible(rms) ? esp_timer_get_time() : 0;
 
   if (rms > s_peak) {
     s_peak = rms;
@@ -732,6 +829,10 @@ void led_argb_feed(const int16_t *pcm, size_t stereo_samples) {
   s_audio.level = (level > pl) ? level : (pl * 0.8f + level * 0.2f);
   s_audio.bass = (bass > pb) ? bass : (pb * 0.85f + bass * 0.15f);
   s_audio.treble = (treble > pt) ? treble : (pt * 0.7f + treble * 0.3f);
+  if (sound_us != 0) {
+    s_audio.last_sound_us = sound_us;
+    s_audio.sound_seen = true;
+  }
   s_audio_feed_calls++;
   portEXIT_CRITICAL(&s_audio_mux);
 }
@@ -746,4 +847,53 @@ void led_argb_get_audio_stats(led_argb_audio_stats_t *stats) {
   stats->bass = s_audio.bass;
   stats->treble = s_audio.treble;
   portEXIT_CRITICAL(&s_audio_mux);
+}
+
+bool led_argb_effect_sync_join(const char *group_id,
+                               const char *leader_entity_id,
+                               int presentation_delay_ms,
+                               int calibration_offset_ms,
+                               const char *visualizer) {
+  bool ok;
+  portENTER_CRITICAL(&s_effect_sync_mux);
+  ok = effect_sync_join(&s_effect_sync, group_id, "follower",
+                        leader_entity_id, presentation_delay_ms,
+                        calibration_offset_ms, visualizer);
+  portEXIT_CRITICAL(&s_effect_sync_mux);
+  return ok;
+}
+
+bool led_argb_effect_sync_leave(const char *group_id) {
+  bool ok;
+  portENTER_CRITICAL(&s_effect_sync_mux);
+  ok = effect_sync_leave(&s_effect_sync, group_id);
+  portEXIT_CRITICAL(&s_effect_sync_mux);
+  return ok;
+}
+
+void led_argb_effect_sync_cancel(void) {
+  portENTER_CRITICAL(&s_effect_sync_mux);
+  effect_sync_cancel(&s_effect_sync);
+  portEXIT_CRITICAL(&s_effect_sync_mux);
+}
+
+bool led_argb_effect_sync_frame(uint32_t seq, uint64_t mono_ms,
+                                uint64_t present_at_ms, uint16_t lead_ms,
+                                float level, float bass, float treble,
+                                uint32_t received_ms) {
+  effect_sync_frame_t frame = {
+      .seq = seq,
+      .mono_ms = mono_ms,
+      .present_at_ms = present_at_ms,
+      .lead_ms = lead_ms,
+      .level = level,
+      .bass = bass,
+      .treble = treble,
+      .received_ms = received_ms,
+  };
+  bool ok;
+  portENTER_CRITICAL(&s_effect_sync_mux);
+  ok = effect_sync_push(&s_effect_sync, &frame);
+  portEXIT_CRITICAL(&s_effect_sync_mux);
+  return ok;
 }

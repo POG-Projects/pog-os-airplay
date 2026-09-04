@@ -1,0 +1,10 @@
+menu "POG voice satellite"
+    config POG_VOICE
+        bool "Enable the POG AI push-to-talk satellite"
+        depends on POG_MIC_SHARED_CLOCKS
+        default n
+        help
+            Explicit listen/stop/cancel controls, authenticated enrolment,
+            Opus over WebSocket v3 and spoken replies. No wake word or AEC.
+            Microphone streaming never starts automatically after boot.
+endmenu

@@ -1,6 +1,9 @@
 #include "amp_ctrl.h"
 #include "audio_limiter.h"
 #include "audio_output.h"
+#include "pogvoice.h"
+#include "pogwake.h"
+#include "pogmic_app.h"
 #include "audio_receiver.h"
 #include "audio_stream.h"
 #include "buttons.h"
@@ -35,11 +38,16 @@
 
 #include "iot_board.h"
 #include "esp_log.h"
+#include "esp_netif_sntp.h"
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "main";
+
+static bool wake_available(void) {
+  return pogvoice_paired() && !pogvoice_busy() && wifi_is_connected();
+}
 
 /* Le rappel d'adoption : `main` démarre le bus, le composant ne peut pas. */
 static void pogdev_bus_start_after_adoption(void) {
@@ -55,6 +63,20 @@ static void pogdev_bus_start_after_adoption(void) {
 
 static bool s_airplay_started = false;
 static bool s_airplay_infrastructure_ready = false;
+static bool s_wall_clock_started = false;
+
+static void start_wall_clock(void) {
+  if (s_wall_clock_started) {
+    return;
+  }
+  esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+  if (esp_netif_sntp_init(&config) == ESP_OK) {
+    s_wall_clock_started = true;
+    ESP_LOGI(TAG, "SNTP wall clock started for effect deadlines");
+  } else {
+    ESP_LOGW(TAG, "SNTP wall clock could not start; relative timing remains active");
+  }
+}
 
 static void start_airplay_services(void) {
   if (s_airplay_started) {
@@ -167,6 +189,7 @@ static void network_monitor_task(void *pvParameters) {
     if (has_network) {
       ESP_LOGI(TAG, "Network up (eth=%s, wifi=%s)", eth_up ? "yes" : "no",
                wifi_up ? "yes" : "no");
+      start_wall_clock();
       start_airplay_services();
       if (dns_running) {
         dns_server_stop();
@@ -236,6 +259,8 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(ret);
   ESP_ERROR_CHECK(settings_init());
+  pogvoice_init(pogmic_app_stream_start);
+  pogwake_init(pogmic_app_monitor_start, wake_available, pogvoice_start_wake);
   spiffs_storage_init();
   log_stream_init();
   ESP_ERROR_CHECK(playback_control_init());
@@ -317,6 +342,7 @@ void app_main(void) {
 
   bool connected = eth_available || wifi_is_connected();
   if (connected) {
+    start_wall_clock();
     start_airplay_services();
   }
 

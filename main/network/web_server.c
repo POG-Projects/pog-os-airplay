@@ -4,11 +4,15 @@
 #include "esp_http_server.h"
 #include "esp_https_ota.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_random.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "pogdev_bus.h"
 #include "pogdev_enrol.h"
+#include "pogmic_app.h"
+#include "pogvoice.h"
+#include "pogwake.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -119,6 +123,7 @@ static esp_err_t serve_embedded_index(httpd_req_t *req) {
   size_t offset = 0;
 
   httpd_resp_set_type(req, "text/html; charset=utf-8");
+  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   /* A reboot/OTA must not resurrect a stale control panel from browser cache.
    */
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
@@ -144,6 +149,7 @@ static esp_err_t serve_embedded_logs(httpd_req_t *req) {
   const size_t embedded_len = (size_t)(web_logs_html_end - web_logs_html_start);
   const size_t len = embedded_len > 0 ? embedded_len - 1 : 0;
   httpd_resp_set_type(req, "text/html; charset=utf-8");
+  httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
   return httpd_resp_send(req, web_logs_html_start, (ssize_t)len);
 }
@@ -1202,9 +1208,10 @@ static esp_err_t matrix_post_handler(httpd_req_t *req) {
 
 static esp_err_t argb_get_handler(httpd_req_t *req) {
   bool en = false;
+  bool music = false;
   int gpio = -1, count = 30, fx = 0, br = 128, speed = 5;
   uint32_t color = 0x2080FF;
-  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed);
+  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed, &music);
 
   cJSON *json = cJSON_CreateObject();
   cJSON_AddBoolToObject(json, "enabled", en);
@@ -1214,6 +1221,7 @@ static esp_err_t argb_get_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(json, "brightness", br);
   cJSON_AddNumberToObject(json, "color", (double)color);
   cJSON_AddNumberToObject(json, "speed", speed);
+  cJSON_AddBoolToObject(json, "music_mode", music);
 
   char *json_str = cJSON_Print(json);
   if (!json_str) {
@@ -1252,9 +1260,10 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
 
   // Start from the current config so partial bodies keep existing values.
   bool en = false;
+  bool music = false;
   int gpio = -1, count = 30, fx = 0, br = 128, speed = 5;
   uint32_t color = 0x2080FF;
-  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed);
+  settings_get_argb(&en, &gpio, &count, &fx, &br, &color, &speed, &music);
 
   cJSON *j_en = cJSON_GetObjectItem(json, "enabled");
   cJSON *j_gpio = cJSON_GetObjectItem(json, "gpio");
@@ -1263,6 +1272,7 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
   cJSON *j_br = cJSON_GetObjectItem(json, "brightness");
   cJSON *j_color = cJSON_GetObjectItem(json, "color");
   cJSON *j_speed = cJSON_GetObjectItem(json, "speed");
+  cJSON *j_music = cJSON_GetObjectItem(json, "music_mode");
 
   if (j_en && cJSON_IsBool(j_en)) {
     en = cJSON_IsTrue(j_en);
@@ -1285,6 +1295,9 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
   if (j_speed && cJSON_IsNumber(j_speed)) {
     speed = (int)cJSON_GetNumberValue(j_speed);
   }
+  if (j_music && cJSON_IsBool(j_music)) {
+    music = cJSON_IsTrue(j_music);
+  }
 
   cJSON *response = cJSON_CreateObject();
 
@@ -1295,9 +1308,11 @@ static esp_err_t argb_post_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(response, "success", false);
     cJSON_AddStringToObject(response, "error", "Invalid range");
   } else {
-    esp_err_t err = settings_set_argb(en, gpio, count, fx, br, color, speed);
+    esp_err_t err =
+        settings_set_argb(en, gpio, count, fx, br, color, speed, music);
     if (err == ESP_OK) {
       led_argb_reconfigure(); // apply live
+      pogdev_bus_notify();
       cJSON_AddBoolToObject(response, "success", true);
     } else {
       cJSON_AddBoolToObject(response, "success", false);
@@ -1779,6 +1794,24 @@ static esp_err_t mqtt_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+static bool voice_quiesce_for_ota(httpd_req_t *req) {
+  pogwake_suspend(true);
+  pogvoice_cancel();
+  for (int i = 0; i < 300; i++) {
+    pogwake_status_t wake;
+    pogwake_get_status(&wake);
+    if (!wake.active && !pogvoice_busy()) {
+      vTaskDelay(1); /* Let idle reclaim the audio task stacks. */
+      return true;
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  pogwake_suspend(false);
+  httpd_resp_set_status(req, "409 Conflict");
+  httpd_resp_sendstr(req, "Voice is stopping; retry the update");
+  return false;
+}
+
 static esp_err_t ota_update_handler(httpd_req_t *req) {
   if (check_auth(req) != ESP_OK)
     return ESP_FAIL;
@@ -1796,6 +1829,7 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
   }
 
   // Stop AirPlay to free resources during OTA
+  if (!voice_quiesce_for_ota(req)) return ESP_FAIL;
   ESP_LOGI(TAG, "Stopping AirPlay for OTA update");
   rtsp_server_stop();
 
@@ -1803,6 +1837,7 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
 
   if (err != ESP_OK) {
     esp_err_t restart_err = rtsp_server_start();
+    pogwake_suspend(false);
     if (restart_err != ESP_OK) {
       ESP_LOGE(TAG, "Failed to restore AirPlay after OTA error: %s",
                esp_err_to_name(restart_err));
@@ -1824,9 +1859,15 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
    with .github/workflows/ci-release.yml. An empty string means that the CI does
    not publish a compatible OTA image for this configuration. */
 static const char *ota_release_env(void) {
-#if defined(POG_BOARD_XIAO_S3) || \
+#if defined(CONFIG_BOARD_WROVER_E) && defined(CONFIG_POG_VOICE)
+  return "wrover-e-voice";
+#elif defined(CONFIG_BOARD_WROVER_E) && CONFIG_BOARD_WROVER_E
+  return "wrover-e";
+#elif defined(POG_BOARD_XIAO_S3) || \
     (defined(CONFIG_BOARD_XIAO_ESP32S3) && CONFIG_BOARD_XIAO_ESP32S3)
   return "xiao-s3";
+#elif defined(CONFIG_BOARD_POG_N16R8) && CONFIG_BOARD_POG_N16R8
+  return "n16r8";
 #elif defined(CONFIG_BOARD_ESP32S3_GENERIC) && CONFIG_BOARD_ESP32S3_GENERIC
   return "esp32s3";
 #elif defined(CONFIG_BOARD_SQUEEZEAMP) && CONFIG_BOARD_SQUEEZEAMP && \
@@ -1843,10 +1884,16 @@ static const char *ota_release_env(void) {
 
 static const char *ota_release_asset(void) {
   const char *env = ota_release_env();
+  if (strcmp(env, "wrover-e-voice") == 0)
+    return "firmware-wrover-e-voice.bin";
+  if (strcmp(env, "wrover-e") == 0)
+    return "firmware-wrover-e.bin";
   if (strcmp(env, "esp32s3") == 0)
     return "firmware-esp32s3.bin";
   if (strcmp(env, "xiao-s3") == 0)
     return "firmware-xiao-s3.bin";
+  if (strcmp(env, "n16r8") == 0)
+    return "firmware-n16r8.bin";
   if (strcmp(env, "squeezeamp") == 0)
     return "firmware-squeezeamp-bt.bin";
   if (strcmp(env, "esparagus-audio-brick") == 0)
@@ -1896,6 +1943,7 @@ static esp_err_t ota_latest_handler(httpd_req_t *req) {
   }
 
   ESP_LOGI(TAG, "Stopping AirPlay for HTTPS OTA: %s", asset);
+  if (!voice_quiesce_for_ota(req)) return ESP_FAIL;
   rtsp_server_stop();
 
   esp_http_client_config_t http_config = {
@@ -1913,6 +1961,7 @@ static esp_err_t ota_latest_handler(httpd_req_t *req) {
   esp_err_t err = esp_https_ota(&ota_config);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "HTTPS OTA failed: %s", esp_err_to_name(err));
+    pogwake_suspend(false);
     esp_err_t restart_err = rtsp_server_start();
     if (restart_err != ESP_OK) {
       ESP_LOGE(TAG, "Failed to restore AirPlay after HTTPS OTA error: %s",
@@ -2115,6 +2164,20 @@ static esp_err_t audio_stats_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(json, "argb_bass", argb.bass);
   cJSON_AddNumberToObject(json, "argb_treble", argb.treble);
   cJSON_AddBoolToObject(json, "ptp_locked", ptp_clock_is_locked());
+  cJSON_AddItemToObject(json, "microphone", pogmic_app_status());
+  cJSON *voice = pogvoice_status();
+  pogwake_status_t wake;
+  pogwake_get_status(&wake);
+  cJSON *wake_json = cJSON_AddObjectToObject(voice, "wake");
+  cJSON_AddBoolToObject(wake_json, "supported", wake.supported);
+  cJSON_AddBoolToObject(wake_json, "enabled", wake.enabled);
+  cJSON_AddBoolToObject(wake_json, "active", wake.active);
+  cJSON_AddNumberToObject(wake_json, "model", wake.model);
+  cJSON_AddStringToObject(wake_json, "phrase", wake.phrase);
+  cJSON_AddStringToObject(wake_json, "error", esp_err_to_name(wake.error));
+  cJSON_AddNumberToObject(wake_json, "detections", wake.detections);
+  cJSON_AddNumberToObject(wake_json, "overruns", wake.overruns);
+  cJSON_AddItemToObject(json, "voice", voice);
   cJSON_AddNumberToObject(json, "ptp_offset_ns", ptp.filtered_offset_ns);
   cJSON_AddNumberToObject(json, "ptp_lock_time_ms", ptp.lock_time_ms);
 
@@ -2130,6 +2193,248 @@ static esp_err_t audio_stats_handler(httpd_req_t *req) {
   free(json_str);
   cJSON_Delete(json);
   return ESP_OK;
+}
+
+static esp_err_t microphone_test_handler(httpd_req_t *req) {
+  /* check_auth permits setup without a password for other settings. A
+   * microphone must require actual authentication, even during setup. */
+  if (!settings_has_device_password()) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    httpd_resp_sendstr(
+        req, "Set an administrator password before testing the microphone");
+    return ESP_OK;
+  }
+  if (check_auth(req) != ESP_OK) {
+    return ESP_FAIL;
+  }
+  esp_err_t err = pogmic_app_test_start();
+  if (err != ESP_OK) {
+    httpd_resp_set_status(req, err == ESP_ERR_INVALID_ARG ? "400 Bad Request"
+                                                          : "409 Conflict");
+    httpd_resp_sendstr(req, esp_err_to_name(err));
+    return ESP_OK;
+  }
+  httpd_resp_set_status(req, "202 Accepted");
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, "{\"success\":true,\"duration_ms\":5000}");
+}
+
+#define MIC_SAMPLE_SECONDS 2
+#define MIC_SAMPLE_MAX_RATE 48000
+
+typedef struct {
+  SemaphoreHandle_t done;
+  int16_t *pcm;
+  size_t capacity;
+  size_t target_frames;
+  size_t frames;
+  uint32_t rate;
+  esp_err_t error;
+} microphone_sample_t;
+
+static esp_err_t microphone_sample_capture(const int16_t *pcm, size_t frames,
+                                           uint32_t rate, esp_err_t error,
+                                           void *arg) {
+  microphone_sample_t *sample = arg;
+  if (!pcm) {
+    sample->error = error;
+    xSemaphoreGive(sample->done);
+    return ESP_OK;
+  }
+  if (!sample->rate)
+    sample->rate = rate;
+  if (!sample->target_frames && rate <= MIC_SAMPLE_MAX_RATE)
+    sample->target_frames = MIC_SAMPLE_SECONDS * rate;
+  if (rate != sample->rate || !sample->target_frames ||
+      sample->frames >= sample->target_frames) {
+    pogmic_stream_stop();
+    return rate == sample->rate && sample->target_frames ? ESP_OK
+                                                         : ESP_ERR_INVALID_ARG;
+  }
+  size_t available = sample->target_frames - sample->frames;
+  size_t copy = frames < available ? frames : available;
+  memcpy(sample->pcm + sample->frames, pcm, copy * sizeof(*pcm));
+  sample->frames += copy;
+  if (sample->frames == sample->target_frames)
+    pogmic_stream_stop();
+  return ESP_OK;
+}
+
+static void wav_u16(uint8_t *out, uint16_t value) {
+  out[0] = value & 0xff;
+  out[1] = value >> 8;
+}
+
+static void wav_u32(uint8_t *out, uint32_t value) {
+  out[0] = value & 0xff;
+  out[1] = (value >> 8) & 0xff;
+  out[2] = (value >> 16) & 0xff;
+  out[3] = value >> 24;
+}
+
+static void microphone_sample_wav_header(uint8_t header[44], uint32_t rate,
+                                         uint32_t pcm_bytes) {
+  memcpy(header, "RIFF", 4);
+  wav_u32(header + 4, 36 + pcm_bytes);
+  memcpy(header + 8, "WAVEfmt ", 8);
+  wav_u32(header + 16, 16);
+  wav_u16(header + 20, 1);
+  wav_u16(header + 22, 1);
+  wav_u32(header + 24, rate);
+  wav_u32(header + 28, rate * 2);
+  wav_u16(header + 32, 2);
+  wav_u16(header + 34, 16);
+  memcpy(header + 36, "data", 4);
+  wav_u32(header + 40, pcm_bytes);
+}
+
+static esp_err_t microphone_sample_handler(httpd_req_t *req) {
+  /* Deliberately absent from the normal UI: this endpoint records exactly two
+   * seconds only after an authenticated POST from the opt-in training tool. */
+  if (!settings_has_device_password()) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    return httpd_resp_sendstr(req, "Set an administrator password first");
+  }
+  if (check_auth(req) != ESP_OK)
+    return ESP_FAIL;
+
+  microphone_sample_t sample = {0};
+  sample.capacity = MIC_SAMPLE_SECONDS * MIC_SAMPLE_MAX_RATE;
+  sample.pcm = heap_caps_malloc(sample.capacity * sizeof(*sample.pcm),
+                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  sample.done = xSemaphoreCreateBinary();
+  if (!sample.pcm || !sample.done) {
+    heap_caps_free(sample.pcm);
+    if (sample.done)
+      vSemaphoreDelete(sample.done);
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+
+  pogwake_pause();
+  for (int i = 0; i < 100; i++) {
+    pogwake_status_t wake;
+    pogwake_get_status(&wake);
+    if (!wake.active)
+      break;
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  esp_err_t err = pogmic_app_sample_start(microphone_sample_capture, &sample);
+  if (err == ESP_OK) {
+    /* I2S reads time out within 100 ms, so cleanup always completes promptly
+     * after the bounded buffer asks the capture task to stop. */
+    if (xSemaphoreTake(sample.done, pdMS_TO_TICKS(5000)) != pdTRUE) {
+      pogmic_stream_stop();
+      xSemaphoreTake(sample.done, portMAX_DELAY);
+      err = ESP_ERR_TIMEOUT;
+    } else {
+      err = sample.error;
+    }
+  }
+
+  esp_err_t response_err = ESP_OK;
+  if (err == ESP_OK && sample.frames > 0 && sample.rate > 0) {
+    uint32_t pcm_bytes = (uint32_t)(sample.frames * sizeof(*sample.pcm));
+    uint8_t header[44];
+    microphone_sample_wav_header(header, sample.rate, pcm_bytes);
+    httpd_resp_set_type(req, "audio/wav");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Content-Disposition",
+                       "attachment; filename=hey-pog-sample.wav");
+    response_err =
+        httpd_resp_send_chunk(req, (const char *)header, sizeof(header));
+    if (response_err == ESP_OK)
+      response_err =
+          httpd_resp_send_chunk(req, (const char *)sample.pcm, pcm_bytes);
+    if (response_err == ESP_OK)
+      response_err = httpd_resp_send_chunk(req, NULL, 0);
+  } else {
+    httpd_resp_set_status(req, err == ESP_ERR_NO_MEM ? "503 Service Unavailable"
+                                                     : "409 Conflict");
+    response_err = httpd_resp_sendstr(req, esp_err_to_name(err));
+  }
+  memset(sample.pcm, 0, sample.frames * sizeof(*sample.pcm));
+  heap_caps_free(sample.pcm);
+  vSemaphoreDelete(sample.done);
+  return response_err;
+}
+
+static esp_err_t voice_action_handler(httpd_req_t *req) {
+  if (!settings_has_device_password()) {
+    httpd_resp_set_status(req, "403 Forbidden");
+    return httpd_resp_sendstr(
+        req, "Set an administrator password before using voice");
+  }
+  if (check_auth(req) != ESP_OK)
+    return ESP_FAIL;
+  if (req->content_len <= 0 || req->content_len > 768) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body size");
+    return ESP_FAIL;
+  }
+  char body[769];
+  size_t used = 0;
+  while (used < (size_t)req->content_len) {
+    int n = httpd_req_recv(req, body + used, req->content_len - used);
+    if (n <= 0) {
+      httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete body");
+      return ESP_FAIL;
+    }
+    used += (size_t)n;
+  }
+  body[used] = 0;
+  cJSON *j = cJSON_ParseWithLength(body, used + 1);
+  const cJSON *action = cJSON_GetObjectItemCaseSensitive(j, "action");
+  esp_err_t err = ESP_ERR_INVALID_ARG;
+  if (cJSON_IsString(action)) {
+    if (!strcmp(action->valuestring, "start")) {
+      pogwake_pause();
+      for (int i = 0; i < 100; i++) {
+        pogwake_status_t wake;
+        pogwake_get_status(&wake);
+        if (!wake.active) break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+      }
+      vTaskDelay(1);
+      err = pogvoice_start();
+    } else if (!strcmp(action->valuestring, "wake")) {
+      const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(j, "enabled");
+      const cJSON *model = cJSON_GetObjectItemCaseSensitive(j, "model");
+      if (cJSON_IsBool(enabled) && cJSON_IsNumber(model) &&
+          model->valuedouble == model->valueint && model->valueint >= 0 && model->valueint < 3) {
+        err = pogwake_configure(cJSON_IsTrue(enabled), (unsigned)model->valueint);
+        if (!cJSON_IsTrue(enabled)) pogvoice_cancel();
+      }
+    } else if (!strcmp(action->valuestring, "finish")) {
+      pogvoice_finish();
+      err = ESP_OK;
+    } else if (!strcmp(action->valuestring, "cancel")) {
+      pogvoice_cancel();
+      err = ESP_OK;
+    } else if (!strcmp(action->valuestring, "forget")) {
+      pogwake_status_t wake;
+      pogwake_get_status(&wake);
+      err = wake.supported ? pogwake_configure(false, wake.model) : ESP_OK;
+      if (err == ESP_OK) err = pogvoice_forget();
+    } else if (!strcmp(action->valuestring, "enroll")) {
+      const cJSON *url = cJSON_GetObjectItemCaseSensitive(j, "api_url");
+      const cJSON *code = cJSON_GetObjectItemCaseSensitive(j, "code");
+      const cJSON *lan =
+          cJSON_GetObjectItemCaseSensitive(j, "allow_insecure_lan");
+      if (cJSON_IsString(url) && cJSON_IsString(code))
+        err = pogvoice_enroll(url->valuestring, code->valuestring,
+                              cJSON_IsTrue(lan));
+    }
+  }
+  memset(body, 0, sizeof(body));
+  cJSON_Delete(j);
+  if (err != ESP_OK) {
+    httpd_resp_set_status(req, err == ESP_ERR_INVALID_ARG ? "400 Bad Request"
+                                                          : "409 Conflict");
+    return httpd_resp_sendstr(req, esp_err_to_name(err));
+  }
+  httpd_resp_set_status(req, "202 Accepted");
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, "{\"success\":true}");
 }
 
 /* Protected nudge of the master output gain by +/-5 (clamped 0..100). Used by
@@ -2675,8 +2980,9 @@ esp_err_t web_server_start(uint16_t port) {
 #endif
   config.lru_purge_enable = true; // Reclaim stale sockets when all are in use
   config.max_uri_handlers =
-      48; // captive portal + EQ + speedtest + gain + auth + matrix + argb +
-          // tone + nowplaying + volume + buttons + mqtt + protection + pogdev
+      51; // captive portal + EQ + speedtest + gain + auth + matrix + argb + mic
+          // + voice tone + nowplaying + volume + buttons + mqtt + protection +
+          // pogdev
   config.max_resp_headers = 8;
   config.stack_size = 8192;
   config.close_fn = web_session_close;
@@ -2688,6 +2994,19 @@ esp_err_t web_server_start(uint16_t port) {
   }
 
   // Register handlers
+  httpd_uri_t mic_test_uri = {.uri = "/api/microphone/test",
+                              .method = HTTP_POST,
+                              .handler = microphone_test_handler};
+  ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &mic_test_uri));
+  httpd_uri_t mic_sample_uri = {.uri = "/api/microphone/sample",
+                                .method = HTTP_POST,
+                                .handler = microphone_sample_handler};
+  ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &mic_sample_uri));
+  httpd_uri_t voice_uri = {.uri = "/api/voice/action",
+                           .method = HTTP_POST,
+                           .handler = voice_action_handler};
+  ESP_ERROR_CHECK(httpd_register_uri_handler(s_server, &voice_uri));
+
   httpd_uri_t root_uri = {
       .uri = "/", .method = HTTP_GET, .handler = root_handler};
   httpd_register_uri_handler(s_server, &root_uri);

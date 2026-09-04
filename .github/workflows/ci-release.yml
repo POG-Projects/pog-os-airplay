@@ -60,6 +60,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Compile and run microphone PCM and GPIO safety tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I components/pogmic/include \
+            test_host/test_pogmic_pcm.c components/pogmic/pogmic_pcm.c -lm \
+            -o /tmp/pog-airplay-mic-test
+          /tmp/pog-airplay-mic-test
+
+      - name: Test voice framing, trust boundaries and sample-rate conversion
+        run: |
+          cc -std=c11 -fsanitize=address,undefined -c components/audio-resampler/resampler.c -o /tmp/pog-resampler.o
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -I components/pogvoice/include -I components/audio-resampler \
+            test_host/test_pogvoice.c components/pogvoice/pogvoice_protocol.c \
+            components/pogvoice/pogvoice_resample.c /tmp/pog-resampler.o -lm -o /tmp/pog-voice-test
+          /tmp/pog-voice-test
+
       # La politique de survie du lien MQTT est pure (pogdev_retry.c) : elle se
       # vérifie ici sans ESP-IDF ni matériel, comme hub_retry chez pog-os-vox.
       - name: Compile and run pogdev retry policy tests
@@ -68,6 +84,20 @@ jobs:
             test_host/test_pogdev_retry.c components/pogdev/pogdev_retry.c \
             -o /tmp/pog-airplay-retry-test
           /tmp/pog-airplay-retry-test
+
+      - name: Compile and run effect synchronization tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I main \
+            test_host/test_effect_sync.c main/effect_sync.c -lm \
+            -o /tmp/pog-airplay-effect-sync-test
+          /tmp/pog-airplay-effect-sync-test
+
+      - name: Compile and run addressable light policy tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I main \
+            test_host/test_led_argb_policy.c main/led_argb_policy.c \
+            -o /tmp/pog-airplay-led-policy-test
+          /tmp/pog-airplay-led-policy-test
 
   format-check:
     runs-on: ubuntu-latest
@@ -177,6 +207,14 @@ jobs:
         run: |
           rm -rf .pio/build
           pio run -e xiao-s3
+          pio run -e n16r8
+
+      - name: Build WROVER-E firmware and compact filesystem
+        run: |
+          pio run -e wrover-e
+          pio run -e wrover-e -t buildfs
+          pio run -e wrover-e-voice
+          pio run -e wrover-e-voice -t buildfs
 
   build:
     runs-on: ubuntu-latest
@@ -199,12 +237,30 @@ jobs:
             flash_size: "8MB"
             label: "Seeed XIAO ESP32-S3 (8 Mo)"
             sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.xiao"
+          - name: n16r8
+            env: n16r8
+            target: esp32s3
+            flash_size: "16MB"
+            label: "POG AirPlay N16R8 (MAX98357A, 16 Mo)"
+            sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.n16r8"
           - name: squeezeamp-bt
             env: squeezeamp
             target: esp32
             flash_size: "8MB"
             label: "SqueezeAMP (ESP32, BT, 8 Mo)"
             sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.squeezeamp;sdkconfig.defaults.bt"
+          - name: wrover-e
+            env: wrover-e
+            target: esp32
+            flash_size: "4MB"
+            label: "ESP32-WROVER-E (4 Mo, PSRAM)"
+            sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.wrover-e"
+          - name: wrover-e-voice
+            env: wrover-e-voice
+            target: esp32
+            flash_size: "4MB"
+            label: "ESP32-WROVER-E vocal (I2S 32/33/25/35, 4 Mo)"
+            sdkconfig: "sdkconfig.defaults;sdkconfig.defaults.wrover-e;sdkconfig.defaults.wrover-e-voice"
           # squeezeamp-4m is intentionally omitted: the web-UI SPIFFS image
           # overflows the 4 MB layout's ~188 KB storage partition
           # (SpiffsFullError). Re-add once the 4 MB `data/www` is trimmed or the

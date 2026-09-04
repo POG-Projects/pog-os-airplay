@@ -234,10 +234,11 @@ esp_err_t settings_set_matrix(bool en, int fx, int br, int din, int clk,
  * @param br    Output: master brightness (0-255)
  * @param color Output: base colour 0xRRGGBB (for solid/breathe/comet/etc.)
  * @param speed Output: animation speed (1-10)
+ * @param music Output: musical override enabled (requires POG Home)
  * @return ESP_OK (always returns valid values)
  */
 esp_err_t settings_get_argb(bool *en, int *gpio, int *count, int *fx, int *br,
-                            uint32_t *color, int *speed);
+                            uint32_t *color, int *speed, bool *music);
 
 /**
  * Set and persist the RGB strip configuration. Validates ranges
@@ -246,7 +247,7 @@ esp_err_t settings_get_argb(bool *en, int *gpio, int *count, int *fx, int *br,
  * @return ESP_OK on success, ESP_ERR_INVALID_ARG on a bad range
  */
 esp_err_t settings_set_argb(bool en, int gpio, int count, int fx, int br,
-                            uint32_t color, int speed);
+                            uint32_t color, int speed, bool music);
 
 // ---- Home Assistant MQTT integration ----
 

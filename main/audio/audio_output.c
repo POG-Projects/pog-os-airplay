@@ -3,6 +3,8 @@
 #include "audio_limiter.h"
 #include "audio_receiver.h"
 #include "audio_resample.h"
+#include "pogvoice.h"
+#include "amp_ctrl.h"
 #include "eq_dsp.h"
 #include "led.h"
 #include "led_argb.h"
@@ -17,6 +19,16 @@
 #include "rtsp_server.h"
 #include <inttypes.h>
 #include <stdlib.h>
+
+#ifdef CONFIG_POG_MIC_SHARED_CLOCKS
+#include "pogmic.h"
+#include "pogmic_output.h"
+#define output_write pogmic_output_write
+#define OUTPUT_BITS  I2S_DATA_BIT_WIDTH_32BIT
+#else
+#define output_write i2s_channel_write
+#define OUTPUT_BITS  I2S_DATA_BIT_WIDTH_16BIT
+#endif
 
 // SIDE NOTE; providing power from GPIO pins is capped ~20mA.
 #if CONFIG_I2S_GND_IO >= 0
@@ -124,18 +136,22 @@ static void playback_task(void *arg) {
       resample_reinit_needed = false;
       audio_resample_init((uint32_t)source_rate, OUTPUT_RATE, 2);
     }
-    if (flush_requested) {
+    if (flush_requested && !pogvoice_busy()) {
       flush_requested = false;
       audio_resample_reset();
       i2s_channel_disable(tx_handle);
       i2s_channel_enable(tx_handle);
     }
     size_t samples = audio_receiver_read(pcm, FRAME_SAMPLES + 1);
+    /* Drain music as usual while the explicit voice turn owns the speaker.
+     * Replies are already resampled to OUTPUT_RATE by the voice component. */
+    bool voice = pogvoice_speaker_read(pcm, FRAME_SAMPLES + 1, &samples);
+    amp_ctrl_set_voice_active(voice);
     if (samples > 0) {
       int64_t process_started_us = esp_timer_get_time();
       int16_t *play_buf = pcm;
       size_t play_samples = samples;
-      if (audio_resample_is_active()) {
+      if (!voice && audio_resample_is_active()) {
         play_samples = audio_resample_process(pcm, samples, resample_buf,
                                               MAX_RESAMPLE_FRAMES);
         play_buf = resample_buf;
@@ -145,7 +161,15 @@ static void playback_task(void *arg) {
       // stereo frame count.
       eq_dsp_process(play_buf, play_samples);
       apply_channel_mix(play_buf, play_samples);
-      apply_volume(play_buf, play_samples * 2);
+      if (voice) {
+        /* Conservative reply gain, independent of an AirPlay sender's mute;
+         * the user's master ceiling and the final limiter still apply. */
+        int32_t gain = settings_get_max_gain_q15() * 30 / 100;
+        for (size_t i = 0; i < play_samples * 2; i++)
+          play_buf[i] = (int16_t)((int32_t)play_buf[i] * gain / 32768);
+      } else {
+        apply_volume(play_buf, play_samples * 2);
+      }
       // Feed-forward peak limiter on the FINAL post-volume signal to protect
       // the speakers from clipping (zero-cost when disabled). Always clamps
       // to int16 internally before the I2S write.
@@ -162,13 +186,13 @@ static void playback_task(void *arg) {
         s_process_max_us = process_us;
       }
       portEXIT_CRITICAL(&s_stats_lock);
-      i2s_channel_write(tx_handle, play_buf, play_samples * 4, &written,
-                        portMAX_DELAY);
+      output_write(tx_handle, play_buf, play_samples * 4, &written,
+                   portMAX_DELAY);
       taskYIELD();
     } else {
       led_audio_feed(silence, FRAME_SAMPLES);
-      i2s_channel_write(tx_handle, silence, (size_t)FRAME_SAMPLES * 4, &written,
-                        pdMS_TO_TICKS(10));
+      output_write(tx_handle, silence, (size_t)FRAME_SAMPLES * 4, &written,
+                   pdMS_TO_TICKS(10));
       vTaskDelay(1);
     }
   }
@@ -180,6 +204,11 @@ static void playback_task(void *arg) {
 }
 
 esp_err_t audio_output_init(void) {
+  ESP_RETURN_ON_FALSE(GPIO_IS_VALID_OUTPUT_GPIO(I2S_BCK_PIN) &&
+                          GPIO_IS_VALID_OUTPUT_GPIO(I2S_LRCK_PIN) &&
+                          GPIO_IS_VALID_OUTPUT_GPIO(I2S_DOUT_PIN),
+                      ESP_ERR_INVALID_ARG, TAG,
+                      "I2S clocks and amplifier DIN require output GPIOs");
   i2s_chan_config_t chan_cfg =
       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   chan_cfg.dma_desc_num = I2S_DMA_DESC_NUM;
@@ -190,7 +219,7 @@ esp_err_t audio_output_init(void) {
 
   i2s_std_config_t std_cfg = {
       .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(OUTPUT_RATE),
-      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(OUTPUT_BITS,
                                                       I2S_SLOT_MODE_STEREO),
       .gpio_cfg =
           {
@@ -216,6 +245,10 @@ esp_err_t audio_output_init(void) {
                       "std mode init failed");
   ESP_RETURN_ON_ERROR(i2s_channel_enable(tx_handle), TAG,
                       "channel enable failed");
+
+#ifdef CONFIG_POG_MIC_SHARED_CLOCKS
+  pogmic_shared_clock_ready();
+#endif
 
   audio_resample_init(44100, OUTPUT_RATE, 2);
 
@@ -252,7 +285,7 @@ void audio_output_stop(void) {
 
 esp_err_t audio_output_write(const void *data, size_t bytes, TickType_t wait) {
   size_t written = 0;
-  return i2s_channel_write(tx_handle, data, bytes, &written, wait);
+  return output_write(tx_handle, data, bytes, &written, wait);
 }
 
 void audio_output_set_sample_rate(uint32_t rate) {
