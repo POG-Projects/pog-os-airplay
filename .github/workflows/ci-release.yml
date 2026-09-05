@@ -57,7 +57,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Validate release policy
-        run: python3 test_host/test_release_workflow.py
+        run: |
+          python3 test_host/test_release_workflow.py
+          bash test_host/test_release_string_check.sh
 
       - name: Compile and run microphone PCM and GPIO safety tests
         run: |
@@ -315,7 +317,7 @@ jobs:
       - name: Verify embedded firmware version
         run: |
           EXPECTED="${{ needs.version.outputs.version }}"
-          if ! strings "dist/firmware-${{ matrix.name }}.bin" | grep -Fxq "$EXPECTED"; then
+          if ! strings "dist/firmware-${{ matrix.name }}.bin" | grep -Fx "$EXPECTED" >/dev/null; then
             echo "firmware-${{ matrix.name }}.bin does not embed version $EXPECTED"
             exit 1
           fi

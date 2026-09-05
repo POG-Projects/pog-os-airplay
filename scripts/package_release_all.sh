@@ -24,7 +24,7 @@ while IFS='|' read -r NAME ENV TARGET FLASH LABEL SDKCONFIG; do
   MERGED="dist/merged-$NAME.bin"
   cp build/airplay2-receiver.bin "$APP"
   cp build/merged.bin "$MERGED"
-  strings "$APP" | grep -Fxq "$VERSION"
+  strings "$APP" | grep -Fx "$VERSION" >/dev/null
 
   APP_SHA=$(sha256sum "$APP" | cut -d' ' -f1)
   MERGED_SHA=$(sha256sum "$MERGED" | cut -d' ' -f1)
