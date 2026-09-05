@@ -387,6 +387,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # ESP-IDF's container writes generated dependencies as root. Repair a
+      # previous interrupted run before checkout asks git to clean the workspace.
+      - name: Repair workspace ownership from previous container builds
+        run: sudo chown -R --no-dereference "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -414,7 +418,7 @@ jobs:
           command: >-
             scripts/package_release_all.sh "$(cat version.txt)" "$(git rev-parse HEAD)";
             rc=$?;
-            chown -R --reference=. dist build sdkconfig 2>/dev/null || true;
+            chown -R --reference=. dist build sdkconfig managed_components 2>/dev/null || true;
             exit $rc
       - name: Publish one immutable GitHub release
         env:
