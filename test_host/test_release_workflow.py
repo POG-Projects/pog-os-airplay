@@ -28,6 +28,7 @@ for required in (
     "espressif/idf:v5.5",
     '-R --no-dereference "$(id -u):$(id -g)" /workspace',
     "Validate immutable release source",
+    "unset IDF_TARGET",
     'scripts/package_release_all.sh "$(cat version.txt)" "$(git rev-parse HEAD)"',
     "dist build sdkconfig managed_components",
     "Publish one immutable GitHub release",
@@ -40,6 +41,11 @@ if release.group("body").index("Repair workspace ownership") > release.group("bo
     "actions/checkout@v6"
 ):
     raise SystemExit("release workspace ownership must be repaired before checkout")
+
+if release.group("body").index("unset IDF_TARGET") > release.group("body").index(
+    "scripts/package_release_all.sh"
+):
+    raise SystemExit("release builder must discard the action's single-target environment")
 
 if builder.count("idf.py -DSDKCONFIG_DEFAULTS=") != 1:
     raise SystemExit("release builder must compile from source")

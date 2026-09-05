@@ -421,6 +421,7 @@ jobs:
           esp_idf_version: v5.5
           target: esp32s3
           command: >-
+            unset IDF_TARGET;
             scripts/package_release_all.sh "$(cat version.txt)" "$(git rev-parse HEAD)";
             rc=$?;
             chown -R --reference=. dist build sdkconfig managed_components 2>/dev/null || true;
