@@ -390,7 +390,12 @@ jobs:
       # ESP-IDF's container writes generated dependencies as root. Repair a
       # previous interrupted run before checkout asks git to clean the workspace.
       - name: Repair workspace ownership from previous container builds
-        run: sudo chown -R --no-dereference "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+        run: |
+          docker run --rm \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspace" \
+            --entrypoint chown \
+            espressif/idf:v5.5 \
+            -R --no-dereference "$(id -u):$(id -g)" /workspace
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0

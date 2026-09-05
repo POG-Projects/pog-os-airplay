@@ -23,7 +23,10 @@ if release is None:
 for required in (
     "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
     "Repair workspace ownership from previous container builds",
-    'sudo chown -R --no-dereference "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"',
+    'docker run --rm',
+    'type=bind,source=$GITHUB_WORKSPACE,target=/workspace',
+    "espressif/idf:v5.5",
+    '-R --no-dereference "$(id -u):$(id -g)" /workspace',
     "Validate immutable release source",
     'scripts/package_release_all.sh "$(cat version.txt)" "$(git rev-parse HEAD)"',
     "dist build sdkconfig managed_components",
