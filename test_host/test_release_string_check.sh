@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BUILDER="$ROOT/scripts/package_release_all.sh"
+WORKFLOW="$ROOT/.github/workflows/ci-release.yml"
 VERSION=0.1.51
 FIXTURE=$(mktemp "${TMPDIR:-/tmp}/pog-airplay-release-string.XXXXXX")
 trap 'rm -f "$FIXTURE"' EXIT
@@ -12,6 +13,11 @@ if grep -Fq 'strings "$APP" | grep -Fxq "$VERSION"' "$BUILDER"; then
   exit 1
 fi
 grep -Fq 'strings "$APP" | grep -Fx "$VERSION" >/dev/null' "$BUILDER"
+if grep -Fq 'grep -Fxq "$EXPECTED"' "$WORKFLOW"; then
+  echo "CI version check must not stop strings early under pipefail" >&2
+  exit 1
+fi
+grep -Fq 'grep -Fx "$EXPECTED" >/dev/null' "$WORKFLOW"
 
 # Keep enough data after the early match to reproduce strings receiving
 # SIGPIPE when grep uses -q under `set -o pipefail`.

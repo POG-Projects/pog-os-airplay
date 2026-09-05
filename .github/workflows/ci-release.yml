@@ -317,7 +317,7 @@ jobs:
       - name: Verify embedded firmware version
         run: |
           EXPECTED="${{ needs.version.outputs.version }}"
-          if ! strings "dist/firmware-${{ matrix.name }}.bin" | grep -Fxq "$EXPECTED"; then
+          if ! strings "dist/firmware-${{ matrix.name }}.bin" | grep -Fx "$EXPECTED" >/dev/null; then
             echo "firmware-${{ matrix.name }}.bin does not embed version $EXPECTED"
             exit 1
           fi
