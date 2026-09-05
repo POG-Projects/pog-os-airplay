@@ -22,13 +22,21 @@ if release is None:
     raise SystemExit("release job is missing")
 for required in (
     "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+    "Repair workspace ownership from previous container builds",
+    'sudo chown -R --no-dereference "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"',
     "Validate immutable release source",
     'scripts/package_release_all.sh "$(cat version.txt)" "$(git rev-parse HEAD)"',
+    "dist build sdkconfig managed_components",
     "Publish one immutable GitHub release",
     "--verify-tag",
 ):
     if required not in release.group("body"):
         raise SystemExit(f"release guardrail missing: {required}")
+
+if release.group("body").index("Repair workspace ownership") > release.group("body").index(
+    "actions/checkout@v6"
+):
+    raise SystemExit("release workspace ownership must be repaired before checkout")
 
 if builder.count("idf.py -DSDKCONFIG_DEFAULTS=") != 1:
     raise SystemExit("release builder must compile from source")
